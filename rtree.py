@@ -1,11 +1,11 @@
 from typing import Tuple, List, Optional
 import numpy as np
-from data_generation import cluster
+from data_generation import cluster, generate_numbers
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import pdb
 
-M =2 # Arbitrarily set M.
+M =4 # Arbitrarily set M.
 
 def bounding_rectangle(points):
     """
@@ -120,14 +120,12 @@ class RTree_node:
                 min_y = rect[0][1]
                 max_x = rect[1][0]
                 max_y = rect[1][1]
-                pdb.set_trace()
                 centroid = ((max_x + min_x)/2, (max_y + min_y)/2)
                 lst.append(centroid)
                 mapping[centroid] = i
 
             arr = np.array(lst)
             lst1, lst2, kmeans = cluster(arr, M)
-            pdb.set_trace()
             node2 = RTree_node([], [self.children[mapping[tuple(i)]] for i in lst2], self.parent, [])
 
             self.children = [self.children[mapping[tuple(i)]] for i in lst1]
@@ -168,7 +166,6 @@ class RTree:
             # Adjust the bounding rectangle on parent, by looking at the children
             if p2:
                 p2.rectangle = adjust_rectangle(p2)
-            pdb.set_trace()
             p1.rectangle = adjust_rectangle(p1)
            
             return self.adjust_tree(p1, p2)
@@ -226,17 +223,19 @@ def traverse(root, fig):
 
 if __name__ == '__main__':
     root = RTree()
-    root.insert((2,3))
-    root.insert((1,5))
-    root.insert((10, 15))
-    root.insert((1000, 140))
-    pdb.set_trace()
-    root.insert((30, 20))
+    # root.insert((2,3))
+    # root.insert((1,5))
+    # root.insert((10, 15))
+    # root.insert((1000, 140))
+    # root.insert((30, 20))
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    a = ([2, 1, 10, 1000, 30],[3, 5, 15,140, 20])
-    ax.scatter(a[0],a[1], color = 'red')
-    pdb.set_trace()
+    lst = generate_numbers(0, 100, 20)
+    for i in lst:
+        root.insert(i)
+    x = np.take(lst,0, 1)
+    y = np.take(lst, 1, 1)
+    ax.scatter(x,y, color = 'red')
     traverse(root.root, ax)
     plt.show()
 
