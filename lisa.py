@@ -168,6 +168,7 @@ def calculate_alpha(partition, beta, y):
 
 def find_interval(point, Theta, T_i):
     """
+    point is a 1 x 2 array.
     Return the interval that we found the point in.
 
     Will be of form ((x_0, x_1), (y_0, y_1))
@@ -182,6 +183,8 @@ def binary_search(element, array, beginning, end):
     Return the index of the element that it closest belongs to in an array.
     """
     mid = (beginning + end)//2
+    if element < array[beginning]: # End the binary search if the element is less than min
+        return None
     if element > array[end]: # In this particular case, we have something belonging in the last interval.
         return array[end], array[end + 1]
     if array[mid] <= element < array[mid + 1]:
@@ -224,6 +227,7 @@ def cell_index(point, Theta, T_i):
 
 def mapping_function(point, Theta, T_i):
     """
+    Point is a 1 x 2 array.
     Returns the value of the mapping function on point, Theta, T_i
     """
     x,y = find_interval(point, Theta, T_i)
@@ -294,7 +298,6 @@ def create_shards(params, full_lst, psi):
         V = len(f)
         shard_start_id = i * D
         shard = {}
-        pdb.set_trace()
         positions = np.floor(f/psi).flatten()
         for position in positions:
             position = int(position)
@@ -307,6 +310,113 @@ def create_shards(params, full_lst, psi):
 
     return shards
 
+def decompose_query(Theta, bottom_left, top_right):
+    """
+    Takes a query rectangle and we decompose it into cells that intersect with the cells.
+
+    bottom_left: 1x2 numpy array representing the bottom left vertex
+    top_right: 1x2 numpy array representing the top right vertex.
+    Theta: The breakpoints for all the axis.
+
+    Returns a list of points that overlap with Theta.
+    """
+    x_1, y_1 = bottom_left.flatten()
+    x_2, y_2 = top_right.flatten()
+    lst_x = [x_1]
+    lst_y = [y_1]
+    for i in Theta[0]: # Dimension x
+        if x_1 <= i < x_2:
+            lst_x.append(i)
+    for i in Theta[1]: # Dimension y
+        if y_1 <= i < y_2:
+            lst_y.append(i)
+    lst_x.append(x_2)
+    lst_y.append(y_2)
+    points_x = []
+    points_y = []
+    for i in range(len(lst_x) - 1):
+        points_x.append(( lst_x[i], lst_x[i+1]))
+
+    for i in range(len(lst_y) - 1):
+        points_y.append((lst_y[i], lst_y[i+1]))
+
+    full_points = [tuple(zip(a,b)) for a in points_x for b in points_y]
+    return full_points
+
+def shard_prediction(mapping, index, params, psi):
+    """
+    mapping is a float representing a point's mapped value.
+    index is used in using F_index to calculate the shard prediction
+    params is a K x 3 list representing alpha, beta, and F_i values
+    """
+    alpha, beta, _ = params[index]
+    total = alpha[0] # Set to alpha bar.
+    for i in range(len(beta)):
+        if mapping >= beta[i]:
+            total += alpha[i+1] * (mapping-beta[i])
+    return np.floor(total/psi)
+
+def shard_get(index, lower, upper, shards):
+    k = []
+    shard = shards[index]
+    if lower is None and upper is None:
+        # Return everything within the shard at index index.
+        for i in shard:
+            k.extend(shard[i])
+    elif lower is None:
+        upper = int(upper)
+        for i in range(0, upper + 1):
+            k.extend(shard[i])
+    elif upper is None:
+        lower = int(lower)
+        i = lower
+        while i in shard:
+            k.extend(shard[i])
+            i += 1
+    else:
+        upper, lower = int(upper), int(lower)
+        for i in range(lower, upper + 1):
+            k.extend(shard[i])
+    return k
+
+def find_points(points, params, shards, M, T_i, psi):
+    """
+    points is a N x 2 list of points that we need to calculate the shards on.
+    params is a K X 3 list representing alpha, beta, and F_i in that order
+    shards is a list of dictionaries that represents what each shard[i] sets.
+    M is a 1 x M lenght list representing the partition points.
+    T_i is a 2 x N length list representing the lengths of Theta.
+    psi is a integer representing the expected number of keys falling in a range.
+
+    Returns a list of points found that lie within points.
+    """
+    answer = set()
+    for i in points:
+        lower_left, upper_right = i
+        lower_mapping = mapping_function(lower_left, Theta, T_i)
+        upper_mapping = mapping_function(upper_right, Theta, T_i)
+        lower = binary_search(lower_mapping, M, 0, len(M) - 2) # We remove 2 from length M, because the bin search will return an interval
+        upper = binary_search(upper_mapping, M, 0, len(M) - 2)
+
+        index_lower = M.index(lower[0])
+        index_upper = M.index(upper[0])
+
+        shard_pred_l = shard_prediction(lower_mapping, index_lower, params, psi)
+        shard_pred_u = shard_prediction(upper_mapping, index_upper, params, psi)
+        k = []
+        if index_upper < index_lower:
+            raise Exception("Upper should be higher than lower, failed")
+        if index_upper > index_lower:
+            print("We got a problem. Need to rethink how to grab shards...")
+            k = shard_get(index_lower, shard_pred_l, None, shards)
+            for j in range(index_lower + 1, index_upper):
+                k.extend(shard_get(j, None, None, shards))
+            k.extend(shard_get(index_upper, None, shard_pred_u, shards))
+        else:
+            k = shard_get(index_lower, shard_pred_l, shard_pred_u, shards) 
+        answer.update([tuple(i) for i in k])
+    return answer
+
 def visualize(Theta, lst, T_i):
     x = np.take(lst, 0, 1)
     y = np.take(lst, 1, 1)
@@ -317,15 +427,22 @@ def visualize(Theta, lst, T_i):
             ax.add_patch(Rectangle(xy=(Theta[0][i], Theta[1][j]), width=Theta[0][i+1]-Theta[0][i], height=Theta[1][j+1]-Theta[1][j], fill=False, color='blue'))
     ax.scatter(x, y, color='red')
     # annotations = np.zeroes(lst.shape[0]) # N points, with annotations.
-    i = 0
-    while i < lst.shape[0]:
-        mapping_function(lst[i], Theta, T_i)
-        # annotation = mapping_function(lst[i], Theta, T_i)
-        ax.annotate(mapping_function(lst[i],Theta, T_i), lst[i])
-        i += 1
+    # i = 0
+    # while i < lst.shape[0]:
+    #     mapping_function(lst[i], Theta, T_i)
+    #     # annotation = mapping_function(lst[i], Theta, T_i)
+    #     # ax.annotate(mapping_function(lst[i],Theta, T_i), lst[i])
+    #     i += 1
 
     plt.show()
 
+def in_query(point, q_rectangle):
+    low, up = q_rectangle
+    x_l, y_l = low
+    x_u, y_u = up
+
+    x_p, y_p = point
+    return x_l <= x_p <= x_u and y_l <= y_p <= y_u
 
 if __name__ == "__main__":
     lst = generate_numbers(0, 100, 100)
@@ -342,5 +459,12 @@ if __name__ == "__main__":
     shards = create_shards(params, full_lst, 5)
     print(shards)
     print(params)
+    points = decompose_query(Theta, np.asarray((20, 20)), np.asarray((70, 70)))
+    return_results = find_points(points, params, shards, M, T_i, 5)
+    print(len(return_results))
+    final_results = {point for point in return_results if in_query(point, ((20, 20), (70, 70)))}
+    pdb.set_trace()
+    another_result = [point for point in full_lst[:, 1:]if in_query(point, ((20, 20), (70, 70)))]
+    pdb.set_trace()
     visualize(Theta, lst, T_i )
     
