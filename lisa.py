@@ -1,8 +1,10 @@
 import numpy as np
+import math
 from data_generation import generate_numbers
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import pdb
+import pickle
 """
 Quick Reminders:
 Theta = Border points generated along every axis
@@ -43,7 +45,6 @@ def train(partitions, sigma, psi):
     # TODO: Make it so that we have more than 5 points in a partition. See if beta can descend when we have more to work with.
 
     for partition in partitions:
-        pdb.set_trace()
         V = len(partition)
         y = np.arange(V).reshape([V, 1])
         beta = np.zeros([1,sigma])
@@ -55,7 +56,6 @@ def train(partitions, sigma, psi):
         try:
             alpha, A = calculate_alpha(partition, beta, y)
         except:
-            # pdb.set_trace()
             # alpha, A = calculate_alpha(partition, beta,y )
             pass
         curr_loss = calculate_loss(A, alpha, y)
@@ -72,17 +72,14 @@ def train(partitions, sigma, psi):
             grad = calculate_gradient(alpha, beta, partition, A, y)
             print(num_iterations)
             print(grad)
-            # pdb.set_trace()
             grad = grad.flatten()[1:] # Grab everything except the first element.
             for i in [0.001, 0.01, 0.05, 0.1]: # Possible learning rates
                 beta_lr = (grad * i) + beta # Descend in the gradient. TODO: MAKE SURE THIS IS DOING ELEMENT WISE ADDITION
                 beta_lr = np.sort(beta_lr)
-                # pdb.set_trace()
                 try:
                     alpha, A = calculate_alpha(partition, beta_lr, y)
                 except:
                     # If we fail to calculate_alpha properly, then we just say, okay, this is considered optimal
-                    # pdb.set_trace()
                     continue
                 if check_alpha(alpha):
                     loss = calculate_loss(A, alpha, y)
@@ -94,7 +91,6 @@ def train(partitions, sigma, psi):
                 beta = curr_beta_lr
                 num_iterations += 1
                 if orig_loss - curr_loss < 0.000001:
-                    # pdb.set_trace()
                     break
                 orig_loss = curr_loss
             else:
@@ -176,15 +172,16 @@ def find_interval(point, Theta, T_i):
     # print(Theta, point)
     x = binary_search(point[0], Theta[0], 0, T_i[0] - 1)
     y = binary_search(point[1], Theta[1], 0, T_i[1] - 1)
+
     return (x,y)
 
 def binary_search(element, array, beginning, end):
     """
-    Return the index of the element that it closest belongs to in an array.
+    Return the interval of the element that it closest belongs to in an array.
     """
     mid = (beginning + end)//2
     if element < array[beginning]: # End the binary search if the element is less than min
-        return None
+        return array[beginning], array[beginning + 1] # Set to the beginning.
     if element > array[end]: # In this particular case, we have something belonging in the last interval.
         return array[end], array[end + 1]
     if array[mid] <= element < array[mid + 1]:
@@ -322,8 +319,8 @@ def decompose_query(Theta, bottom_left, top_right):
     """
     x_1, y_1 = bottom_left.flatten()
     x_2, y_2 = top_right.flatten()
-    lst_x = [x_1]
-    lst_y = [y_1]
+    lst_x = [x_1] if x_1 > Theta[0][0] else [Theta[0][0]]
+    lst_y = [y_1] if y_1 > Theta[1][0] else [Theta[1][0]]
     for i in Theta[0]: # Dimension x
         if x_1 <= i < x_2:
             lst_x.append(i)
@@ -356,28 +353,35 @@ def shard_prediction(mapping, index, params, psi):
             total += alpha[i+1] * (mapping-beta[i])
     return np.floor(total/psi)
 
-def shard_get(index, lower, upper, shards):
+def shard_get(index, lower, upper, shards, psi):
     k = []
+    pages = 0
     shard = shards[index]
     if lower is None and upper is None:
         # Return everything within the shard at index index.
         for i in shard:
+            pages += np.ceil(len(shard[i])/psi)
             k.extend(shard[i])
     elif lower is None:
         upper = int(upper)
-        for i in range(0, upper + 1):
-            k.extend(shard[i])
+        for i in shard:
+            if i <= upper:
+                pages += np.ceil(len(shard[i])/psi)
+                k.extend(shard[i])
     elif upper is None:
         lower = int(lower)
         i = lower
         while i in shard:
             k.extend(shard[i])
+            pages += np.ceil(len(shard[i])/psi)
             i += 1
     else:
         upper, lower = int(upper), int(lower)
         for i in range(lower, upper + 1):
-            k.extend(shard[i])
-    return k
+            if i in shard:
+                pages += np.ceil(len(shard[i])/psi)
+                k.extend(shard[i])
+    return k, pages
 
 def find_points(points, params, shards, M, T_i, psi):
     """
@@ -391,33 +395,44 @@ def find_points(points, params, shards, M, T_i, psi):
     Returns a list of points found that lie within points.
     """
     answer = set()
+    pages = 0
     for i in points:
-        lower_left, upper_right = i
+        #TODO: Maybe care about out of bounds/ignore it?
+        lower_left, top_right = i
         lower_mapping = mapping_function(lower_left, Theta, T_i)
-        upper_mapping = mapping_function(upper_right, Theta, T_i)
+        upper_mapping = mapping_function(top_right, Theta, T_i)
+
+        if upper_mapping - np.floor(lower_mapping) > 1:
+            upper_mapping = np.floor(lower_mapping + 1)
+
         lower = binary_search(lower_mapping, M, 0, len(M) - 2) # We remove 2 from length M, because the bin search will return an interval
         upper = binary_search(upper_mapping, M, 0, len(M) - 2)
-
         index_lower = M.index(lower[0])
         index_upper = M.index(upper[0])
-
-        shard_pred_l = shard_prediction(lower_mapping, index_lower, params, psi)
         shard_pred_u = shard_prediction(upper_mapping, index_upper, params, psi)
-        k = []
+        shard_pred_l = shard_prediction(lower_mapping, index_lower, params, psi)
+        
+        # TODO: See if we can create a full shard list, instead of on the fly grabbing the shards that matter.
+        # Perhaps that will speed things up??
         if index_upper < index_lower:
-            raise Exception("Upper should be higher than lower, failed")
+            raise Exception("Upper less than lower. Failed")
         if index_upper > index_lower:
-            print("We got a problem. Need to rethink how to grab shards...")
-            k = shard_get(index_lower, shard_pred_l, None, shards)
-            for j in range(index_lower + 1, index_upper):
-                k.extend(shard_get(j, None, None, shards))
-            k.extend(shard_get(index_upper, None, shard_pred_u, shards))
+            k, p = shard_get(index_lower, shard_pred_l, None, shards, psi)
+            for i in range(index_lower + 1, index_upper):
+                ans, p = shard_get(i, None, None, shards, psi)
+                k.extend(ans)
+                pages += p
+            ans, p = shard_get(index_upper, None, shard_pred_u, shards, psi)
+            k.extend(ans)
+            pages += p
         else:
-            k = shard_get(index_lower, shard_pred_l, shard_pred_u, shards) 
+            k, p = shard_get(index_lower, shard_pred_l, shard_pred_u, shards, psi) 
+        pages += p
         answer.update([tuple(i) for i in k])
-    return answer
 
-def visualize(Theta, lst, T_i):
+    return answer, pages
+
+def visualize(Theta, lst, T_i, params, psi):
     x = np.take(lst, 0, 1)
     y = np.take(lst, 1, 1)
     fig = plt.figure()
@@ -427,6 +442,14 @@ def visualize(Theta, lst, T_i):
             ax.add_patch(Rectangle(xy=(Theta[0][i], Theta[1][j]), width=Theta[0][i+1]-Theta[0][i], height=Theta[1][j+1]-Theta[1][j], fill=False, color='blue'))
     ax.scatter(x, y, color='red')
     # annotations = np.zeroes(lst.shape[0]) # N points, with annotations.
+    i = 0
+    while i < lst.shape[0]:
+        mapping = mapping_function(lst[i], Theta, T_i)
+        ind = M.index(binary_search(mapping, M, 0, len(M) - 2)[0])
+        shard_pos = shard_prediction(mapping, ind, params, psi)
+        ax.annotate(f"({ind}, {shard_pos})", lst[i])
+        i += 1
+
     # i = 0
     # while i < lst.shape[0]:
     #     mapping_function(lst[i], Theta, T_i)
@@ -444,8 +467,58 @@ def in_query(point, q_rectangle):
     x_p, y_p = point
     return x_l <= x_p <= x_u and y_l <= y_p <= y_u
 
+def KNN(k, delta, point, Theta, params, shards, M, T_i, psi):
+    """
+    Calculates KNN for point point
+
+    k: An int representing how many points we want to return
+    delta: A delta that we want to search in.
+    point: The point to consider.
+    Theta: The breakpoints along every axis
+    params: The calculated parameters for LISA
+    shards: The points contained in their shards
+    M: the partitions we have
+    T_i: The length of Theta for each dimension
+    psi: How many points are in a shard.
+    """
+    x_p, y_p = point
+    bottom_left = np.asarray((x_p - delta, y_p - delta))
+    top_right = np.asarray((x_p + delta, y_p + delta))
+
+    # Decompose the rectangle, then get the results based on the range query.
+    q_rectangles = decompose_query(Theta, bottom_left, top_right)
+    results, _ = find_points(q_rectangles, params, shards, M, T_i, psi)
+    found_points = {point for point in results if in_query(point, (bottom_left, top_right))}
+    if len(found_points) < k:
+        # Return false to force us to increase delta.
+        return False
+    else:
+        answer = []
+        for i in found_points:
+            answer.append((distance(i, point), i[0], i[1]))
+        answer = np.asarray(answer)
+        answer = answer[np.argsort(answer[:,0])]
+
+        answer = np.asarray(answer)[:k] # Take the first k elements.
+        
+        return np.asarray(answer)
+
+def distance(point1, point2):
+    """
+    Calculates the distance between two points
+
+    point1 is a 1x2 array.
+    point2 is a 1x2 array.
+    """
+    x_1, y_1 = point1
+    x_2, y_2 = point2
+    return math.sqrt((x_1 - x_2)**2 + (y_1 - y_2)**2)
+            
+
 if __name__ == "__main__":
-    lst = generate_numbers(0, 100, 100)
+    # lst = generate_numbers(0, 100, 100)
+    # pickle.dump(lst, open("data_100.dump", "wb"))
+    lst = pickle.load(open('data_100.dump', 'rb'))
     T_i = [5, 5]
     # print("lst {}".format(lst))
     Theta = create_cells(lst, T_i)
@@ -455,16 +528,53 @@ if __name__ == "__main__":
     M = [partitions[0][0]]
     for i in partitions:
         M.append(i.max())
-    params = train(partitions, 3, 5) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter. Also psi = 5 because why not. Each shard generates ~ 5.
-    shards = create_shards(params, full_lst, 5)
-    print(shards)
-    print(params)
-    points = decompose_query(Theta, np.asarray((20, 20)), np.asarray((70, 70)))
-    return_results = find_points(points, params, shards, M, T_i, 5)
-    print(len(return_results))
-    final_results = {point for point in return_results if in_query(point, ((20, 20), (70, 70)))}
-    pdb.set_trace()
-    another_result = [point for point in full_lst[:, 1:]if in_query(point, ((20, 20), (70, 70)))]
-    pdb.set_trace()
-    visualize(Theta, lst, T_i )
+    psi = 5
+    params = train(partitions, 3, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter. Also psi = 5 because why not. Each shard generates ~ 5.
+    shards = create_shards(params, full_lst, psi)
+
+    q_rect = (np.asarray((30,80)), np.asarray((53,99)))
+    points = decompose_query(Theta, q_rect[0], q_rect[1])
+    return_results, pages = find_points(points, params, shards, M, T_i, psi)
+    final_results = {tuple(point) for point in return_results if in_query(point, q_rect)}
+    print(pages)
+    print(final_results)
+    true_results = {tuple(point) for point in lst if in_query(point, q_rect)}
+    print(true_results)
+
+    #  points = decompose_query(Theta, np.asarray((-10, -10)), np.asarray((-5, -5)))
+    #  return_results = find_points(points,params,shards,M, T_i, psi)
+    #  final_results = {point for point in return_results if in_query(point, ((-10, -10), (-5, -5)))}
+    #  print(final_results)
+
+    #  points = decompose_query(Theta, np.asarray((2000, 2000)), np.asarray((2010, 2010)))
+    #  return_results = find_points(points,params,shards,M, T_i, psi)
+    #  final_results = {point for point in return_results if in_query(point, ((2000, 2000), (2010, 2010)))}
+    #  print(final_results)
+
+    # points = decompose_query(Theta, np.asarray((-50, 50)), np.asarray((20, 70)))
+    # return_results = find_points(points,params,shards,M, T_i, psi)
+    # final_results = {point for point in return_results if in_query(point, ((-50, 50), (20, 70)))}
+    # print(final_results)
+    num_rand_points = 10
+
+
+    KNN_random_points = generate_numbers(0,100, 10) # Grab randomly, 10 elements.
+    KNN_random_points = pickle.load(open('qpoints_10.dump', 'rb'))
+    average_dist = 0
+    for p in KNN_random_points:
+        delta = 1
+        while(True):
+            ans = KNN(3, delta, p, Theta, params, shards, M, T_i, psi) # KNN with 3 neighbours.
+            if ans is False:
+                delta += 1
+            else:
+                max_dist = np.max(ans[:,0])
+                average_dist += max_dist
+                print(f"Point {p}")
+                print(f'Neighbours {ans}')
+                break
+    average_dist = average_dist/10
+    print(average_dist)
+    # pdb.set_trace()
+    visualize(Theta, lst, T_i,params, psi )
     
