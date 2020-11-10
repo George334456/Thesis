@@ -275,7 +275,9 @@ class RTree_node:
             for i in self.children:
                 branches.append((min_max_dist(point, i.rectangle), min_dist(point, i.rectangle), i))
                 # sort by min_max_dist
-            branches = sorted(branches)
+            branches = np.asarray(branches)
+            branches = branches[np.argsort(branches[:,0])]
+            branches = list(branches)
             branches = self._prune(branches, nearest, k)
 
             i = 0
@@ -404,7 +406,7 @@ if __name__ == '__main__':
     # lst = generate_numbers(0, 100, 20)
     # pickle.dump(lst, open('rtree_20.dump', 'wb'))
     # lst = pickle.load(open('rtree_20.dump', 'rb'))
-    lst = pickle.load(open('data_100.dump', 'rb'))
+    lst = pickle.load(open('data_1000.dump', 'rb'))
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
@@ -413,20 +415,33 @@ if __name__ == '__main__':
     x = np.take(lst,0, 1)
     y = np.take(lst, 1, 1)
     ax.scatter(x,y, color = 'red')
+    total = 0
+    q_rects = pickle.load(open("query_rectangles_1000_100x100.dump", "rb"))
+    for i in q_rects:
+        i = np.asarray(i)
+        result, pages = root.root.search(i)
+        total += pages
+        print(f'Pages {pages}')
+    print(f'Average pages {total/10}')
+
+    result, pages = root.root.search(np.asarray(((20, 20), (45, 45))))
+    print(f'pages {pages}')
 
     q_points = generate_numbers(0, 100, 10)
     # pickle.dump(q_points, open('qpoints_10.dump', 'wb'))
     q_points = pickle.load(open('qpoints_10.dump', 'rb'))
 
     traverse(root.root, ax)
+    total = 0
     
     for i in q_points:
         neighbours, pages = root.root.KNN(i, [], 3)
         neighbours = np.asarray(neighbours)
+        total += pages
         print(f'Point {i}')
         print(f'Neighbours {neighbours}')
         print(f'Pages {pages}')
-
+    print(f'Average pages is {total/10}')
     # result, pages = root.root.search(np.asarray(((48, 3), (67, 18))))
     # actual = [point for point in lst if overlap(point, ((48, 3), (67, 18)))]
     # pdb.set_trace()

@@ -222,6 +222,15 @@ def cell_index(point, Theta, T_i):
 
     return x_ind * T_i[1] + y_ind
 
+def mapping_function_with_index(ind, point_lower, point, Theta, T_i):
+    x, y = find_interval(point_lower, Theta, T_i)
+
+    C_i = (y[1] - y[0]) * (x[1] - x[0])
+    H_i = (point[0] - x[0]) * (point[1] - y[0])
+    # print("area cell {} point {}".format(C_i, H_i))
+    # cell_index = np.where(Theta[0] == x[0]) * T_i[0] + np.where(Theta[1] == y[0])
+    return ind + (H_i/C_i)
+
 def mapping_function(point, Theta, T_i):
     """
     Point is a 1 x 2 array.
@@ -289,7 +298,8 @@ def create_shards(params, full_lst, psi):
     shards = []
     D = np.ceil(len(params[0][-1])/psi)
     count = 0
-    points = full_lst[:, 1:] # Grab everything but the mapping. We want only points and they are already sorted by mapping.
+    points = full_lst # Store the mapping for local shards.
+    # points = full_lst[:, 1:] # Grab everything but the mapping. We want only points and they are already sorted by mapping.
     for i, e in enumerate(params):
         alpha, beta, f = e
         V = len(f)
@@ -353,7 +363,7 @@ def shard_prediction(mapping, index, params, psi):
             total += alpha[i+1] * (mapping-beta[i])
     return np.floor(total/psi)
 
-def shard_get(index, lower, upper, shards, psi):
+def shard_get(index, lower, upper, shards, psi, lmap, umap):
     k = []
     pages = 0
     shard = shards[index]
@@ -364,23 +374,64 @@ def shard_get(index, lower, upper, shards, psi):
             k.extend(shard[i])
     elif lower is None:
         upper = int(upper)
+        found_end_index = None
         for i in shard:
             if i <= upper:
-                pages += np.ceil(len(shard[i])/psi)
-                k.extend(shard[i])
+                curr_shard = shard[i]
+                if found_end_index is not None:
+                    break
+                else:
+                    for ind, element in enumerate(curr_shard):
+                        if element[0] > umap:
+                            found_end_index = ind
+                            break
+                    if found_end_index:
+                        k.extend(curr_shard[:found_end_index])
+                        pages += np.ceil(found_end_index/psi)
+                    else:
+                        k.extend(curr_shard)
+                        pages += np.ceil(len(curr_shard)/psi)
     elif upper is None:
         lower = int(lower)
         i = lower
+        found_index = None
         while i in shard:
-            k.extend(shard[i])
-            pages += np.ceil(len(shard[i])/psi)
+            # Check which page to start at.
+            curr_shard = shard[i]
+            start_page = None
+            if found_index is None:
+                for ind, element in enumerate(curr_shard):
+                    if element[0] > lmap:
+                        # Start from here.
+                        found_index = ind
+                        break
+            if found_index:
+                start_page = np.floor(found_index/psi) # Starting page
+                k.extend(curr_shard[found_index:])
+                pages += np.ceil(len(curr_shard)/psi) - start_page 
+                found_index = 0 # Reset to zero and never touch it again. This is because once we found the start index, we keep going on all the other relevant shards.
+
             i += 1
     else:
         upper, lower = int(upper), int(lower)
         for i in range(lower, upper + 1):
+            res = []
             if i in shard:
-                pages += np.ceil(len(shard[i])/psi)
-                k.extend(shard[i])
+                curr_shard = shard[i]
+                for ind, element in enumerate(curr_shard):
+                    if lmap <= element[0] <= umap:
+                        res.append(ind)
+                    if element[0] > umap:
+                        break
+                if len(res) == 0: # No mapping was found in this range
+                    k.extend(shard[i])
+                else:
+                    start = min(res)
+                    end = max(res)
+                    start_page = int(np.floor(start/psi))
+                    end_page = int(np.floor(end/psi))
+                    pages += end - start + 1
+                    k.extend(curr_shard[start:end + 1])
     return k, pages
 
 def find_points(points, params, shards, M, T_i, psi):
@@ -403,7 +454,7 @@ def find_points(points, params, shards, M, T_i, psi):
         upper_mapping = mapping_function(top_right, Theta, T_i)
 
         if upper_mapping - np.floor(lower_mapping) > 1:
-            upper_mapping = np.floor(lower_mapping + 1)
+            upper_mapping = mapping_function_with_index(np.floor(lower_mapping), lower_left, top_right, Theta, T_i)
 
         lower = binary_search(lower_mapping, M, 0, len(M) - 2) # We remove 2 from length M, because the bin search will return an interval
         upper = binary_search(upper_mapping, M, 0, len(M) - 2)
@@ -417,17 +468,18 @@ def find_points(points, params, shards, M, T_i, psi):
         if index_upper < index_lower:
             raise Exception("Upper less than lower. Failed")
         if index_upper > index_lower:
-            k, p = shard_get(index_lower, shard_pred_l, None, shards, psi)
+            k, p = shard_get(index_lower, shard_pred_l, None, shards, psi, lower_mapping, upper_mapping)
+            pages += p
             for i in range(index_lower + 1, index_upper):
-                ans, p = shard_get(i, None, None, shards, psi)
+                ans, p = shard_get(i, None, None, shards, psi, lower_mapping, upper_mapping)
                 k.extend(ans)
                 pages += p
-            ans, p = shard_get(index_upper, None, shard_pred_u, shards, psi)
+            ans, p = shard_get(index_upper, None, shard_pred_u, shards, psi, lower_mapping, upper_mapping)
             k.extend(ans)
             pages += p
         else:
-            k, p = shard_get(index_lower, shard_pred_l, shard_pred_u, shards, psi) 
-        pages += p
+            k, p = shard_get(index_lower, shard_pred_l, shard_pred_u, shards, psi, lower_mapping, upper_mapping) 
+            pages += p
         answer.update([tuple(i) for i in k])
 
     return answer, pages
@@ -469,7 +521,7 @@ def in_query(point, q_rectangle):
 
 def KNN(k, delta, point, Theta, params, shards, M, T_i, psi):
     """
-    Calculates KNN for point point
+    Calculates KNN for point point, along with page accesses.
 
     k: An int representing how many points we want to return
     delta: A delta that we want to search in.
@@ -487,21 +539,23 @@ def KNN(k, delta, point, Theta, params, shards, M, T_i, psi):
 
     # Decompose the rectangle, then get the results based on the range query.
     q_rectangles = decompose_query(Theta, bottom_left, top_right)
-    results, _ = find_points(q_rectangles, params, shards, M, T_i, psi)
-    found_points = {point for point in results if in_query(point, (bottom_left, top_right))}
-    if len(found_points) < k:
-        # Return false to force us to increase delta.
-        return False
-    else:
-        answer = []
-        for i in found_points:
-            answer.append((distance(i, point), i[0], i[1]))
-        answer = np.asarray(answer)
-        answer = answer[np.argsort(answer[:,0])]
+    results, p = find_points(q_rectangles, params, shards, M, T_i, psi)
+    print(f"Looked at {p} pages")
 
+    found_points = {point[1:] for point in results if in_query(point[1:], (bottom_left, top_right))}
+    answer = []
+    for i in found_points:
+        answer.append((distance(i, point), i[0], i[1]))
+    if len(answer) == 0:
+        return np.asarray(answer), p
+    answer = np.asarray(answer)
+    answer = answer[np.argsort(answer[:,0])]
+    if answer.shape[0] < k:
+        return answer, p
+    else:
         answer = np.asarray(answer)[:k] # Take the first k elements.
-        
-        return np.asarray(answer)
+    
+    return np.asarray(answer), p
 
 def distance(point1, point2):
     """
@@ -513,12 +567,31 @@ def distance(point1, point2):
     x_1, y_1 = point1
     x_2, y_2 = point2
     return math.sqrt((x_1 - x_2)**2 + (y_1 - y_2)**2)
+
+def generate_qrects(min_x, min_y, max_x, max_y):
+    lst = generate_numbers(0, 100, 100)
+    max_length_x = 0.25*(max_x - min_x)
+    max_length_y = 0.25*(max_y - min_y)
+    rng = np.random.default_rng()
+    len_x = rng.uniform(0, max_length_x)
+    len_y = rng.uniform(0, max_length_y)
+
+    k = []
+    for i in lst:
+        x = i[0]
+        y = i[1]
+
+        k.append((np.asarray(((x,y))),np.asarray((x + len_x, y+len_y))))
+    return k
+    
+
             
 
 if __name__ == "__main__":
     # lst = generate_numbers(0, 100, 100)
     # pickle.dump(lst, open("data_100.dump", "wb"))
-    lst = pickle.load(open('data_100.dump', 'rb'))
+    lst = []
+    lst = pickle.load(open('LB.dump', 'rb'))
     T_i = [5, 5]
     # print("lst {}".format(lst))
     Theta = create_cells(lst, T_i)
@@ -532,49 +605,104 @@ if __name__ == "__main__":
     params = train(partitions, 3, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter. Also psi = 5 because why not. Each shard generates ~ 5.
     shards = create_shards(params, full_lst, psi)
 
-    q_rect = (np.asarray((30,80)), np.asarray((53,99)))
-    points = decompose_query(Theta, q_rect[0], q_rect[1])
-    return_results, pages = find_points(points, params, shards, M, T_i, psi)
-    final_results = {tuple(point) for point in return_results if in_query(point, q_rect)}
-    print(pages)
-    print(final_results)
-    true_results = {tuple(point) for point in lst if in_query(point, q_rect)}
-    print(true_results)
+    min_x = np.min(lst[:,0])
+    min_y = np.min(lst[:,1])
+    max_x, max_y = np.max(lst[:,0]), np.max(lst[:,1])
+    pdb.set_trace()
+    # q_rects = generate_qrects(min_x, min_y, max_x, max_y)
+    # pickle.dump(q_rects, open("query_rectangles_1000_100x100.dump", 'wb'))
+    # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
+    
+    q_rects = pickle.load(open("query_rectangles_1000_100x100.dump", "rb"))
+    total_p = 0
+    for i in q_rects:
+        points = decompose_query(Theta, i[0], i[1])
+        return_results, pages = find_points(points, params, shards, M, T_i, psi)
+        final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
+        total_p += pages
+        print(pages)
+    print(f"Average page lookup {total_p/pages}.")
 
-    #  points = decompose_query(Theta, np.asarray((-10, -10)), np.asarray((-5, -5)))
-    #  return_results = find_points(points,params,shards,M, T_i, psi)
-    #  final_results = {point for point in return_results if in_query(point, ((-10, -10), (-5, -5)))}
-    #  print(final_results)
 
-    #  points = decompose_query(Theta, np.asarray((2000, 2000)), np.asarray((2010, 2010)))
-    #  return_results = find_points(points,params,shards,M, T_i, psi)
-    #  final_results = {point for point in return_results if in_query(point, ((2000, 2000), (2010, 2010)))}
-    #  print(final_results)
+    # q_rect = (np.asarray((-10,-10)), np.asarray((-5,-5)))
+    # points = decompose_query(Theta, q_rect[0], q_rect[1])
+    # pdb.set_trace()
+    # return_results, pages = find_points(points, params, shards, M, T_i, psi)
+    # final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], q_rect)} # Remove mapping from the points.
+    # print(pages)
+    # print(final_results)
+    # true_results = {tuple(point) for point in lst if in_query(point, q_rect)}
+    # print(true_results)
+
+    # points = decompose_query(Theta, np.asarray((-10, -10)), np.asarray((-5, -5)))
+    # return_results = find_points(points,params,shards,M, T_i, psi)
+    # pdb.set_trace()
+    # final_results = {point for point in return_results if in_query(point[1:], ((-10, -10), (-5, -5)))}
+    # print(final_results)
+
+    # points = decompose_query(Theta, np.asarray((2000, 2000)), np.asarray((2010, 2010)))
+    # return_results = find_points(points,params,shards,M, T_i, psi)
+    # final_results = {point for point in return_results if in_query(point[1:], ((2000, 2000), (2010, 2010)))}
+    # print(final_results)
 
     # points = decompose_query(Theta, np.asarray((-50, 50)), np.asarray((20, 70)))
     # return_results = find_points(points,params,shards,M, T_i, psi)
-    # final_results = {point for point in return_results if in_query(point, ((-50, 50), (20, 70)))}
+    # final_results = {point for point in return_results if in_query(point[1:], ((-50, 50), (20, 70)))}
     # print(final_results)
-    num_rand_points = 10
 
 
-    KNN_random_points = generate_numbers(0,100, 10) # Grab randomly, 10 elements.
-    KNN_random_points = pickle.load(open('qpoints_10.dump', 'rb'))
-    average_dist = 0
-    for p in KNN_random_points:
-        delta = 1
-        while(True):
-            ans = KNN(3, delta, p, Theta, params, shards, M, T_i, psi) # KNN with 3 neighbours.
-            if ans is False:
-                delta += 1
-            else:
-                max_dist = np.max(ans[:,0])
-                average_dist += max_dist
-                print(f"Point {p}")
-                print(f'Neighbours {ans}')
-                break
-    average_dist = average_dist/10
-    print(average_dist)
+    # KNN TESTING!
+    # num_rand_points = 10
+
+
+    # KNN_random_points = generate_numbers(0,100, 10) # Grab randomly, 10 elements.
+    # average_dist = 0
+    # average_pages = 0
+    # K = 3
+    # print("TRAINING")
+    # for p in KNN_random_points:
+    #     delta = 1
+    #     pages = 0
+    #     while(True):
+    #         ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi) # KNN with 3 neighbours.
+    #         print(pages)
+    #         pages += k_pages
+    #         if ans.shape[0] < K:
+    #             delta += 1
+    #         else:
+    #             max_dist = np.max(ans[:,0])
+    #             average_pages += pages
+    #             average_dist += max_dist
+    #             print(f"Point {p}")
+    #             print(f'Neighbours {ans}\nPages: {pages}')
+    #             break
+    # average_dist = average_dist/10
+    # average_pages = average_pages/10
+    # 
+    # print(average_dist)
+    # average_pages = 0
+
+    # # Real query time.
+    # print("TESTING")
+    # KNN_random_points = pickle.load(open('qpoints_10.dump', 'rb'))
     # pdb.set_trace()
+    # delta = average_dist
+    # for p in KNN_random_points:
+    #     delta = average_dist
+    #     pages = 0
+    #     while True:
+    #         ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi)
+    #         if ans.shape[0] < K:
+    #             mult_factor = 2
+    #             if ans.shape[0] > 0:
+    #                 mult_factor = math.sqrt(K/ans.shape[0])
+    #             delta = delta * mult_factor
+    #         else:
+    #             average_pages += k_pages
+
+    #             print(f"Point {p}")
+    #             print(f'Neighbours {ans}\nPages: {pages}')
+    #             break
+    # print(average_pages/10)
     visualize(Theta, lst, T_i,params, psi )
     
