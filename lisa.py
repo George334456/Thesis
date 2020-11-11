@@ -32,6 +32,13 @@ def calculate_loss(A, alpha, y):
     """
     return np.sum(np.apply_along_axis(lambda x: x * x, 1, (A @ alpha) - y))
 
+def next_batch(partition, y, batchsize = 32):
+    """
+    Batch our partition and y into sizes of batchsize
+    """
+    for i in np.arange(0, partition.shape[0], batchsize):
+        yield (partition[i:i+batchsize], y[i:i+batchsize])
+
 def train(partitions, sigma, psi):
     """
     Return the parameters for the piecewise monotone linear regression model.
@@ -90,7 +97,7 @@ def train(partitions, sigma, psi):
                 # We found something that had loss minimizing.
                 beta = curr_beta_lr
                 num_iterations += 1
-                if orig_loss - curr_loss < 0.000001:
+                if orig_loss - curr_loss < 0.001:
                     break
                 orig_loss = curr_loss
             else:
@@ -106,7 +113,7 @@ def calculate_gradient(alpha, beta, partition, A, y):
 
     alpha: A (1 x sigma + 2) array. Consists of a bar, a0, a1, a2, ..., a sigma. Therefore sigma + 2
     beta: A (1 x sigma + 1) array. Consists of b0, b1, ..., b_sigma. Therefore sigma + 1
-    partition: A V length array representing the things that we do.
+    partition: A V length array representing the input to the function.
     A: A (V + 1 x sigma + 2) array. For calculating alpha
     y: A (V x 1) array to calculate the outputs.
 
@@ -418,11 +425,7 @@ def shard_get(index, lower, upper, shards, psi, lmap, umap):
             res = []
             if i in shard:
                 curr_shard = shard[i]
-                for ind, element in enumerate(curr_shard):
-                    if lmap <= element[0] <= umap:
-                        res.append(ind)
-                    if element[0] > umap:
-                        break
+                res = [i for i, e in enumerate(curr_shard) if lmap <= e[0] <=umap]
                 if len(res) == 0: # No mapping was found in this range
                     k.extend(shard[i])
                 else:
@@ -430,11 +433,11 @@ def shard_get(index, lower, upper, shards, psi, lmap, umap):
                     end = max(res)
                     start_page = int(np.floor(start/psi))
                     end_page = int(np.floor(end/psi))
-                    pages += end - start + 1
+                    pages += end_page - start_page + 1
                     k.extend(curr_shard[start:end + 1])
     return k, pages
 
-def find_points(points, params, shards, M, T_i, psi):
+def find_points(points, params, shards, M, T_i, psi, Theta):
     """
     points is a N x 2 list of points that we need to calculate the shards on.
     params is a K X 3 list representing alpha, beta, and F_i in that order
@@ -442,6 +445,7 @@ def find_points(points, params, shards, M, T_i, psi):
     M is a 1 x M lenght list representing the partition points.
     T_i is a 2 x N length list representing the lengths of Theta.
     psi is a integer representing the expected number of keys falling in a range.
+    Theta is the cell array.
 
     Returns a list of points found that lie within points.
     """
@@ -569,7 +573,7 @@ def distance(point1, point2):
     return math.sqrt((x_1 - x_2)**2 + (y_1 - y_2)**2)
 
 def generate_qrects(min_x, min_y, max_x, max_y):
-    lst = generate_numbers(0, 100, 100)
+    lst = generate_numbers(min(min_x, min_y), max(max_x, max_y), 100)
     max_length_x = 0.25*(max_x - min_x)
     max_length_y = 0.25*(max_y - min_y)
     rng = np.random.default_rng()
@@ -584,25 +588,19 @@ def generate_qrects(min_x, min_y, max_x, max_y):
         k.append((np.asarray(((x,y))),np.asarray((x + len_x, y+len_y))))
     return k
     
-
-            
-
-if __name__ == "__main__":
-    # lst = generate_numbers(0, 100, 100)
-    # pickle.dump(lst, open("data_100.dump", "wb"))
-    lst = []
-    lst = pickle.load(open('LB.dump', 'rb'))
-    T_i = [5, 5]
-    # print("lst {}".format(lst))
+def test_1000():
+    lst = pickle.load(open('data_1000.dump', 'rb'))
+    T_i = [5,5]
     Theta = create_cells(lst, T_i)
-    # print(Theta)
-    # print(cell_index(lst[0], Theta, T_i))
-    partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 3) # Create 3 equal length partitions of the mapping space.
+    pdb.set_trace()
+
+    partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 3) # Create 10 equal length partitions of the mapping space.
+
     M = [partitions[0][0]]
     for i in partitions:
         M.append(i.max())
-    psi = 5
-    params = train(partitions, 3, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter. Also psi = 5 because why not. Each shard generates ~ 5.
+    psi = 50
+    params = train(partitions, 3, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
     shards = create_shards(params, full_lst, psi)
 
     min_x = np.min(lst[:,0])
@@ -610,18 +608,101 @@ if __name__ == "__main__":
     max_x, max_y = np.max(lst[:,0]), np.max(lst[:,1])
     pdb.set_trace()
     # q_rects = generate_qrects(min_x, min_y, max_x, max_y)
-    # pickle.dump(q_rects, open("query_rectangles_1000_100x100.dump", 'wb'))
+    # pickle.dump(q_rects, open("query_rectangles_long_beach.dump", 'wb'))
+    
+    q_rects = pickle.load(open("query_rectangles_100_100x100.dump", "rb"))
+    total_p = 0
+    count = 0
+    for i in q_rects:
+        if count == 14:
+            pdb.set_trace()
+        points = decompose_query(Theta, i[0], i[1])
+        return_results, pages = find_points(points, params, shards, M, T_i, psi, Theta)
+        final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
+        total_p += pages
+        print(pages)
+        count += 1
+    print(f"Average page lookup {total_p/100}.")
+
+def test_long_beach():
+    lst = pickle.load(open('LB.dump', 'rb'))
+
+    # params, shards, M, T_i, psi, Theta = pickle.load(open('long_beach_lisa.obj', 'rb'))
+    T_i = [100, 100]
+
+    Theta = create_cells(lst, T_i)
+    pdb.set_trace()
+
+    partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 10) # Create 10 equal length partitions of the mapping space.
+
+    M = [partitions[0][0]]
+    for i in partitions:
+        M.append(i.max())
+    psi = 50
+    params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+    shards = create_shards(params, full_lst, psi)
+    pickle.dump([params, shards, M, T_i, psi, Theta], open("long_beach_lisa_10bp.obj", 'wb'))
+
+    min_x = np.min(lst[:,0])
+    min_y = np.min(lst[:,1])
+    max_x, max_y = np.max(lst[:,0]), np.max(lst[:,1])
+    pdb.set_trace()
+    q_rects = generate_qrects(min_x, min_y, max_x, max_y)
+    pickle.dump(q_rects, open("query_rectangles_long_beach.dump", 'wb'))
+    
+    total_p = 0
+    count = 0
+    for i in q_rects:
+        points = decompose_query(Theta, i[0], i[1])
+        return_results, pages = find_points(points, params, shards, M, T_i, psi, Theta)
+        final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
+        total_p += pages
+        print(pages)
+        count += 1
+    print(f"Average page lookup {total_p/100}.")
+
+if __name__ == "__main__":
+
+    # test_1000()
+    test_long_beach()
+    pdb.set_trace()
+    lst = pickle.load(open('LB.dump', 'rb'))
+    # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
+    # lst = pickle.load(open('data_1000.dump', 'rb'))
+    T_i = [5, 5]
+    # print("lst {}".format(lst))
+    Theta = create_cells(lst, T_i)
+    # print(Theta)
+    # print(cell_index(lst[0], Theta, T_i))
+    M = [partitions[0][0]]
+    for i in partitions:
+        M.append(i.max())
+    psi = 50
+    params = train(partitions, 3, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+    shards = create_shards(params, full_lst, psi)
+
+    min_x = np.min(lst[:,0])
+    min_y = np.min(lst[:,1])
+    max_x, max_y = np.max(lst[:,0]), np.max(lst[:,1])
+    pdb.set_trace()
+    # q_rects = generate_qrects(min_x, min_y, max_x, max_y)
+    # pickle.dump(q_rects, open("query_rectangles_long_beach.dump", 'wb'))
     # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
     
-    q_rects = pickle.load(open("query_rectangles_1000_100x100.dump", "rb"))
+    q_rects = pickle.load(open("query_rectangles_100_100x100.dump", "rb"))
     total_p = 0
+    # pickle.dump([params, shards, M, T_i, psi], open("long_beach_lisa_full.obj", 'wb'))
+    count = 0
     for i in q_rects:
+        if count == 14:
+            pdb.set_trace()
         points = decompose_query(Theta, i[0], i[1])
         return_results, pages = find_points(points, params, shards, M, T_i, psi)
         final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
         total_p += pages
         print(pages)
-    print(f"Average page lookup {total_p/pages}.")
+        count += 1
+    print(f"Average page lookup {total_p/100}.")
 
 
     # q_rect = (np.asarray((-10,-10)), np.asarray((-5,-5)))

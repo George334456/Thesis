@@ -6,7 +6,7 @@ from matplotlib.patches import Rectangle
 import pdb
 import pickle
 
-M =5 # Arbitrarily set M.
+M =50 # Arbitrarily set M.
 
 def distance(point1, point2):
     """
@@ -393,6 +393,7 @@ def traverse(root, fig):
         min_y = rect[0][1]
         max_x = rect[1][0]
         max_y = rect[1][1]
+        print("adding_patch")
         ax.add_patch(Rectangle(xy=(min_x, min_y), width=max_x-min_x, height=max_y-min_y, fill=False, color='blue'))
         traverse(i, ax)
 
@@ -406,7 +407,9 @@ if __name__ == '__main__':
     # lst = generate_numbers(0, 100, 20)
     # pickle.dump(lst, open('rtree_20.dump', 'wb'))
     # lst = pickle.load(open('rtree_20.dump', 'rb'))
-    lst = pickle.load(open('data_1000.dump', 'rb'))
+    # lst = pickle.load(open('data_1000.dump', 'rb'))
+    lst = pickle.load(open('LB.dump', 'rb'))
+    # lst = lst[:1000]
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
@@ -416,32 +419,34 @@ if __name__ == '__main__':
     y = np.take(lst, 1, 1)
     ax.scatter(x,y, color = 'red')
     total = 0
-    q_rects = pickle.load(open("query_rectangles_1000_100x100.dump", "rb"))
+    q_rects = pickle.load(open("query_rectangles_long_beach.dump", "rb"))
+    # q_rects = pickle.load(open("query_rectangles_100_100x100.dump", 'rb'))
+    pickle.dump(root, open("long_beach_rtree_full.obj", 'wb'))
     for i in q_rects:
         i = np.asarray(i)
         result, pages = root.root.search(i)
         total += pages
         print(f'Pages {pages}')
-    print(f'Average pages {total/10}')
+    print(f'Average pages {total/100}')
 
     result, pages = root.root.search(np.asarray(((20, 20), (45, 45))))
     print(f'pages {pages}')
 
-    q_points = generate_numbers(0, 100, 10)
+    # q_points = generate_numbers(0, 100, 10)
     # pickle.dump(q_points, open('qpoints_10.dump', 'wb'))
-    q_points = pickle.load(open('qpoints_10.dump', 'rb'))
+    # q_points = pickle.load(open('qpoints_10.dump', 'rb'))
 
-    traverse(root.root, ax)
-    total = 0
+    # traverse(root.root, ax)
+    # total = 0
     
-    for i in q_points:
-        neighbours, pages = root.root.KNN(i, [], 3)
-        neighbours = np.asarray(neighbours)
-        total += pages
-        print(f'Point {i}')
-        print(f'Neighbours {neighbours}')
-        print(f'Pages {pages}')
-    print(f'Average pages is {total/10}')
+    # for i in q_points:
+    #     neighbours, pages = root.root.KNN(i, [], 3)
+    #     neighbours = np.asarray(neighbours)
+    #     total += pages
+    #     print(f'Point {i}')
+    #     print(f'Neighbours {neighbours}')
+    #     print(f'Pages {pages}')
+    # print(f'Average pages is {total/10}')
     # result, pages = root.root.search(np.asarray(((48, 3), (67, 18))))
     # actual = [point for point in lst if overlap(point, ((48, 3), (67, 18)))]
     # pdb.set_trace()
