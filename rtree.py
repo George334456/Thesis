@@ -111,22 +111,19 @@ def overlap_rectangles(rect1, rect2):
 
     rect1 and rect2 are 2 x 2 arrays.
     """
-    x_1 = np.take(rect1, 0, 1)
-    y_1 = np.take(rect1, 1, 1)
+    # https://stackoverflow.com/questions/40795709/checking-whether-two-rectangles-overlap-in-python-using-two-bottom-left-corners
+    # return not (self.top_right.x < other.bottom_left.x or 
+    #         self.bottom_left.x > other.top_right.x or 
+    #         self.top_right.y < other.bottom_left.y or 
+    #         self.bottom_left.y > other.top_right.y)    
 
-    x_2 = np.take(rect2, 0, 1)
-    y_2 = np.take(rect2, 1, 1)
+    bottom_left1 = rect1[0]
+    top_right1 = rect1[1]
 
-    points_1 = [(i,j) for i in x_1 for j in y_1]
-    points_2 = [(i,j) for i in x_2 for j in y_2]
+    bottom_left2 = rect2[0]
+    top_right2 = rect2[1]
 
-    for i in points_1:
-        if overlap(i, rect2):
-            return True
-    for i in points_2:
-        if overlap(i, rect1):
-            return True
-    return False
+    return not (top_right1[0] < bottom_left2[0] or bottom_left1[0] > top_right2[0] or top_right1[1] < bottom_left2[1] or bottom_left1[1] > top_right2[1])
     
 
 class RTree_node:
@@ -386,16 +383,18 @@ class RTree:
 def traverse(root, fig):
     if root.children == []:
         print(len(root.data_points))
+    count = 0
     for i in root.children:
-        
         rect = i.rectangle
         min_x = rect[0][0]
         min_y = rect[0][1]
         max_x = rect[1][0]
         max_y = rect[1][1]
         print("adding_patch")
+        ax.annotate(count, (max_x, max_y))
         ax.add_patch(Rectangle(xy=(min_x, min_y), width=max_x-min_x, height=max_y-min_y, fill=False, color='blue'))
-        traverse(i, ax)
+        # traverse(i, ax)
+        count += 1
 
 if __name__ == '__main__':
     root = RTree()
@@ -422,11 +421,17 @@ if __name__ == '__main__':
     # q_rects = pickle.load(open("query_rectangles_long_beach.dump", "rb"))
     q_rects = pickle.load(open("query_rectangles_100_100x100.dump", 'rb'))
     # pickle.dump(root, open("long_beach_rtree_full.obj", 'wb'))
+    count = 0
     for i in q_rects:
         i = np.asarray(i)
+        if count == 2:
+            pdb.set_trace()
+            print("What's wrong here...")
         result, pages = root.root.search(i)
+        print(f"Results: {len(result)}")
         total += pages
         print(f'Pages {pages}')
+        count += 1
     print(f'Average pages {total/100}')
 
     result, pages = root.root.search(np.asarray(((20, 20), (45, 45))))
@@ -439,14 +444,14 @@ if __name__ == '__main__':
     # traverse(root.root, ax)
     total = 0
     
-    for i in q_points:
-        neighbours, pages = root.root.KNN(i, [], 3)
-        neighbours = np.asarray(neighbours)
-        total += pages
-        print(f'Point {i}')
-        print(f'Neighbours {neighbours}')
-        print(f'Pages {pages}')
-    print(f'Average pages is {total/100}')
+    # for i in q_points:
+    #     neighbours, pages = root.root.KNN(i, [], 3)
+    #     neighbours = np.asarray(neighbours)
+    #     total += pages
+    #     print(f'Point {i}')
+    #     print(f'Neighbours {neighbours}')
+    #     print(f'Pages {pages}')
+    # print(f'Average pages is {total/100}')
     # result, pages = root.root.search(np.asarray(((48, 3), (67, 18))))
     # actual = [point for point in lst if overlap(point, ((48, 3), (67, 18)))]
     # pdb.set_trace()
@@ -465,6 +470,7 @@ if __name__ == '__main__':
     #         raise Exception("xd")
     #         print(i)
     #         print("was not found!")
+    traverse(root.root, ax)
     plt.show()
 
 

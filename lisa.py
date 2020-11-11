@@ -621,14 +621,14 @@ def test_1000():
     total_p = 0
     count = 0
     for i in q_rects:
-        if count == 72:
+        if count == 2:
             pdb.set_trace()
         points = decompose_query(Theta, i[0], i[1])
         return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
         final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
         total_p += len(page_set)
-        print(count, pages)
-        print(page_set)
+        print(f"Results: {len(final_results)}")
+        print(len(page_set))
         count += 1
     print(f"Average page lookup {total_p/100}.")
 
@@ -636,81 +636,83 @@ def test_1000():
     num_rand_points = 10
 
 
-    KNN_random_points = generate_numbers(0,100, 10) # Grab randomly, 10 elements.
-    average_dist = 0
-    average_pages = 0
-    K = 3
-    print("TRAINING")
-    for p in KNN_random_points:
-        delta = 1
-        pages = 0
-        while(True):
-            ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi) # KNN with 3 neighbours.
-            print(pages)
-            pages += k_pages
-            if ans.shape[0] < K:
-                delta += 1
-            else:
-                max_dist = np.max(ans[:,0])
-                average_pages += pages
-                average_dist += max_dist
-                print(f"Point {p}")
-                print(f'Neighbours {ans}\nPages: {pages}')
-                break
-    average_dist = average_dist/10
-    average_pages = average_pages/10
-    
-    print(average_dist)
-    average_pages = 0
+    # KNN_random_points = generate_numbers(0,100, 10) # Grab randomly, 10 elements.
+    # average_dist = 0
+    # average_pages = 0
+    # K = 3
+    # print("TRAINING")
+    # for p in KNN_random_points:
+    #     delta = 1
+    #     pages = 0
+    #     while(True):
+    #         ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi) # KNN with 3 neighbours.
+    #         print(pages)
+    #         pages += k_pages
+    #         if ans.shape[0] < K:
+    #             delta += 1
+    #         else:
+    #             max_dist = np.max(ans[:,0])
+    #             average_pages += pages
+    #             average_dist += max_dist
+    #             print(f"Point {p}")
+    #             print(f'Neighbours {ans}\nPages: {pages}')
+    #             break
+    # average_dist = average_dist/10
+    # average_pages = average_pages/10
+    # 
+    # print(average_dist)
+    # average_pages = 0
 
-    # Real query time.
-    print("TESTING")
-    KNN_random_points = pickle.load(open('qpoints_100.dump', 'rb'))
-    pdb.set_trace()
-    delta = average_dist
-    for p in KNN_random_points:
-        delta = average_dist
-        pages = 0
-        while True:
-            ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi)
-            if ans.shape[0] < K:
-                mult_factor = 2
-                if ans.shape[0] > 0:
-                    mult_factor = math.sqrt(K/ans.shape[0])
-                delta = delta * mult_factor
-            else:
-                average_pages += k_pages
+    # # Real query time.
+    # print("TESTING")
+    # KNN_random_points = pickle.load(open('qpoints_100.dump', 'rb'))
+    # pdb.set_trace()
+    # delta = average_dist
+    # for p in KNN_random_points:
+    #     delta = average_dist
+    #     pages = 0
+    #     while True:
+    #         ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi)
+    #         if ans.shape[0] < K:
+    #             mult_factor = 2
+    #             if ans.shape[0] > 0:
+    #                 mult_factor = math.sqrt(K/ans.shape[0])
+    #             delta = delta * mult_factor
+    #         else:
+    #             average_pages += k_pages
 
-                print(f"Point {p}")
-                print(f'Neighbours {ans}\nPages: {pages}')
-                break
-    print(average_pages/100)
+    #             print(f"Point {p}")
+    #             print(f'Neighbours {ans}\nPages: {pages}')
+    #             break
+    # print(average_pages/100)
 def test_long_beach():
     lst = pickle.load(open('LB.dump', 'rb'))
+    params, shards, M, T_i, psi, Theta = pickle.load(open("long_beach_lisa_10bp.obj", 'rb'))
 
     # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
     # params, shards, M, T_i, psi, Theta = pickle.load(open('long_beach_lisa.obj', 'rb'))
-    T_i = [100, 100]
+    # T_i = [100, 100]
 
-    Theta = create_cells(lst, T_i)
-    pdb.set_trace()
+    # Theta = create_cells(lst, T_i)
+    # pdb.set_trace()
 
-    partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 10) # Create 10 equal length partitions of the mapping space.
+    # partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 10) # Create 10 equal length partitions of the mapping space.
 
-    M = [partitions[0][0]]
-    for i in partitions:
-        M.append(i.max())
-    psi = 50
-    params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
-    shards = create_shards(params, full_lst, psi)
-    pickle.dump([params, shards, M, T_i, psi, Theta], open("long_beach_lisa_10bp.obj", 'wb'))
+    # M = [partitions[0][0]]
+    # for i in partitions:
+    #     M.append(i.max())
+    # psi = 50
+    # params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+    # shards = create_shards(params, full_lst, psi)
+    # pickle.dump([params, shards, M, T_i, psi, Theta], open("long_beach_lisa_10bp.obj", 'wb'))
 
-    min_x = np.min(lst[:,0])
-    min_y = np.min(lst[:,1])
-    max_x, max_y = np.max(lst[:,0]), np.max(lst[:,1])
-    pdb.set_trace()
-    q_rects = generate_qrects(min_x, min_y, max_x, max_y)
-    pickle.dump(q_rects, open("query_rectangles_long_beach.dump", 'wb'))
+    # min_x = np.min(lst[:,0])
+    # min_y = np.min(lst[:,1])
+    # max_x, max_y = np.max(lst[:,0]), np.max(lst[:,1])
+    # pdb.set_trace()
+    # q_rects = generate_qrects(min_x, min_y, max_x, max_y)
+    q_rects = pickle.load(open("query_rectangles_long_beach.dump", 'rb'))
+    # pickle.dump(q_rects, open("query_rectangles_long_beach.dump", 'wb'))
     
     total_p = 0
     count = 0
@@ -718,7 +720,8 @@ def test_long_beach():
         points = decompose_query(Theta, i[0], i[1])
         return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
         final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
-        total_p += pages
+        total_p += len(page_set)
+        print(f"Results: {len(final_results)}")
         print(pages)
         count += 1
     print(f"Average page lookup {total_p/100}.")
