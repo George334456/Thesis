@@ -391,26 +391,16 @@ def traverse(root, fig):
         max_x = rect[1][0]
         max_y = rect[1][1]
         print("adding_patch")
-        ax.annotate(count, (max_x, max_y))
-        ax.add_patch(Rectangle(xy=(min_x, min_y), width=max_x-min_x, height=max_y-min_y, fill=False, color='blue'))
+        fig.annotate(count, (max_x, max_y))
+        fig.add_patch(Rectangle(xy=(min_x, min_y), width=max_x-min_x, height=max_y-min_y, fill=False, color='blue'))
         # traverse(i, ax)
         count += 1
 
-if __name__ == '__main__':
+def test_long_beach():
     root = RTree()
-    # root.insert((2,3))
-    # root.insert((1,5))
-    # root.insert((10, 15))
-    # root.insert((1000, 140))
-    # root.insert((30, 20))
-    # lst = generate_numbers(0, 100, 20)
-    # pickle.dump(lst, open('rtree_20.dump', 'wb'))
-    # lst = pickle.load(open('rtree_20.dump', 'rb'))
-    lst = pickle.load(open('data_1000.dump', 'rb'))
-    # lst = pickle.load(open('LB.dump', 'rb'))
-    # lst = lst[:1000]
-
+    lst = pickle.load(open('LB.dump', 'rb'))
     fig = plt.figure()
+
     ax = fig.add_subplot(111)
     for i in lst:
         root.insert(i)
@@ -418,15 +408,11 @@ if __name__ == '__main__':
     y = np.take(lst, 1, 1)
     ax.scatter(x,y, color = 'red')
     total = 0
-    # q_rects = pickle.load(open("query_rectangles_long_beach.dump", "rb"))
-    q_rects = pickle.load(open("query_rectangles_100_100x100.dump", 'rb'))
-    # pickle.dump(root, open("long_beach_rtree_full.obj", 'wb'))
+    q_rects = pickle.load(open("query_rectangles_long_beach.dump", 'rb'))
+
     count = 0
     for i in q_rects:
         i = np.asarray(i)
-        if count == 2:
-            pdb.set_trace()
-            print("What's wrong here...")
         result, pages = root.root.search(i)
         print(f"Results: {len(result)}")
         total += pages
@@ -437,12 +423,83 @@ if __name__ == '__main__':
     result, pages = root.root.search(np.asarray(((20, 20), (45, 45))))
     print(f'pages {pages}')
 
-    # q_points = generate_numbers(0, 100, 100)
-    # pickle.dump(q_points, open('qpoints_100.dump', 'wb'))
+    q_points = pickle.load(open('qpoints_LB.dump', 'rb'))
+
+    total = 0
+
+    print("KNN Testing!")
+    
+    for i in q_points:
+        neighbours, pages = root.root.KNN(i, [], 3)
+        neighbours = np.asarray(neighbours)
+        total += pages
+        print(f'Point {i}')
+        print(f'Neighbours {neighbours}')
+        print(f'Pages {pages}')
+    print(f'Average pages is {total/100}')
+
+    pdb.set_trace()
+    traverse(root.root, ax)
+    plt.show()
+
+def test1000():
+    root = RTree()
+    lst = pickle.load(open('data_1000.dump', 'rb'))
+    fig = plt.figure()
+
+    ax = fig.add_subplot(111)
+    for i in lst:
+        root.insert(i)
+    x = np.take(lst,0, 1)
+    y = np.take(lst, 1, 1)
+    ax.scatter(x,y, color = 'red')
+    total = 0
+    q_rects = pickle.load(open("query_rectangles_100_100x100.dump", 'rb'))
+
+    count = 0
+    for i in q_rects:
+        i = np.asarray(i)
+        result, pages = root.root.search(i)
+        print(f"Results: {len(result)}")
+        total += pages
+        print(f'Pages {pages}')
+        count += 1
+    print(f'Average pages {total/100}')
+
+    result, pages = root.root.search(np.asarray(((20, 20), (45, 45))))
+    print(f'pages {pages}')
+
     q_points = pickle.load(open('qpoints_100.dump', 'rb'))
 
-    # traverse(root.root, ax)
     total = 0
+
+    print("KNN Testing!")
+    
+    for i in q_points:
+        neighbours, pages = root.root.KNN(i, [], 3)
+        neighbours = np.asarray(neighbours)
+        total += pages
+        print(f'Point {i}')
+        print(f'Neighbours {neighbours}')
+        print(f'Pages {pages}')
+    print(f'Average pages is {total/100}')
+
+    pdb.set_trace()
+    traverse(root.root, ax)
+    plt.show()
+if __name__ == '__main__':
+    # test1000()
+    test_long_beach()
+    # pdb.set_trace()
+    # root = RTree()
+    # root.insert((2,3))
+    # root.insert((1,5))
+    # root.insert((10, 15))
+    # root.insert((1000, 140))
+    # root.insert((30, 20))
+    # lst = generate_numbers(0, 100, 20)
+    # pickle.dump(lst, open('rtree_20.dump', 'wb'))
+    # lst = pickle.load(open('rtree_20.dump', 'rb'))
     
     # for i in q_points:
     #     neighbours, pages = root.root.KNN(i, [], 3)
@@ -470,7 +527,5 @@ if __name__ == '__main__':
     #         raise Exception("xd")
     #         print(i)
     #         print("was not found!")
-    traverse(root.root, ax)
-    plt.show()
 
 
