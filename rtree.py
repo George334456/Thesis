@@ -20,6 +20,33 @@ def distance(point1, point2):
     return (p1_x - p2_x)**2 + (p1_y - p2_y)**2
 
 
+def prune(branches, nearest, k):
+    """
+    Prunes a set of branches based on MINDIST and MINMAXDIST of branches, as well as based off of nearest.
+    """
+    cont = True
+    max_nearest = max([i[0] for i in nearest]) if len(nearest) == k else float('inf')
+    while cont:
+        if len(nearest) < k:
+            # We don't want to prematurely prune branches. Ex: We could prune all but one branch, but this branch contains x < k elements. KNN will fail.
+            break
+        lst = [(i[0], i[1]) for i in branches]
+        prune_set = set()
+        for i, e in enumerate(lst):
+            curr_min_max_dist = e[0]
+            for j, element in enumerate(lst):
+                if j == i:
+                    continue
+                if element[1] > curr_min_max_dist or element[1] > max_nearest:
+                    prune_set.add(j)
+        if len(prune_set) == 0:
+            # Finished pruning.
+            break
+        else:
+            # Something to prune, need to prune and rerun
+            branches = [e for i, e in enumerate(branches) if i not in prune_set]
+    return branches
+
 def bounding_rectangle(points):
     """
     Points is a np array of N points of 2 elements. In other words, this is a (N, 2) np array.
@@ -275,44 +302,18 @@ class RTree_node:
             branches = np.asarray(branches)
             branches = branches[np.argsort(branches[:,0])]
             branches = list(branches)
-            branches = self._prune(branches, nearest, k)
+            branches = prune(branches, nearest, k)
 
             i = 0
             while i < len(branches):
                 child = branches[i][2]
                 nearest, p = child.KNN(point, nearest, k)
                 pages += p
-                branches = self._prune(branches, nearest, k)
+                branches = prune(branches, nearest, k)
 
                 i += 1
         return nearest, pages
 
-    def _prune(self, branches, nearest, k):
-        """
-        Prunes a set of branches based on MINDIST and MINMAXDIST of branches, as well as based off of nearest.
-        """
-        cont = True
-        max_nearest = max([i[0] for i in nearest]) if len(nearest) == k else float('inf')
-        while cont:
-            if len(nearest) < k:
-                # We don't want to prematurely prune branches. Ex: We could prune all but one branch, but this branch contains x < k elements. KNN will fail.
-                break
-            lst = [(i[0], i[1]) for i in branches]
-            prune_set = set()
-            for i, e in enumerate(lst):
-                curr_min_max_dist = e[0]
-                for j, element in enumerate(lst):
-                    if j == i:
-                        continue
-                    if element[1] > curr_min_max_dist or element[1] > max_nearest:
-                        prune_set.add(j)
-            if len(prune_set) == 0:
-                # Finished pruning.
-                break
-            else:
-                # Something to prune, need to prune and rerun
-                branches = [e for i, e in enumerate(branches) if i not in prune_set]
-        return branches
         
 class RTree:
     """
@@ -442,7 +443,7 @@ def test_long_beach():
     traverse(root.root, ax)
     plt.show()
 
-def test1000():
+def test_1000():
     root = RTree()
     lst = pickle.load(open('data_1000.dump', 'rb'))
     fig = plt.figure()
@@ -474,9 +475,11 @@ def test1000():
     total = 0
 
     print("KNN Testing!")
+
+    K = 10
     
     for i in q_points:
-        neighbours, pages = root.root.KNN(i, [], 3)
+        neighbours, pages = root.root.KNN(i, [], K)
         neighbours = np.asarray(neighbours)
         total += pages
         print(f'Point {i}')
@@ -488,8 +491,8 @@ def test1000():
     traverse(root.root, ax)
     plt.show()
 if __name__ == '__main__':
-    # test1000()
-    test_long_beach()
+    test_1000()
+    # test_long_beach()
     # pdb.set_trace()
     # root = RTree()
     # root.insert((2,3))

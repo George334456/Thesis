@@ -1,7 +1,8 @@
 import numpy as np
 import math
 from data_generation import generate_numbers
-from shard import Shard, Shard_index
+from shard_implementation import Shard, Shard_index, Cell
+from rtree import min_max_dist, min_dist, prune
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import pdb
@@ -73,7 +74,7 @@ def train(partitions, sigma, psi):
 
         num_iterations = 0
         curr_beta_lr = None
-        converge = False
+        converge = False 
         while(num_iterations < 1000):
             print(curr_loss)
             print(beta)
@@ -165,8 +166,6 @@ def calculate_alpha(partition, beta, y):
     inv = np.linalg.inv(np.matmul(A.T, A))
     alpha = np.matmul(np.matmul(inv, A.T), y) # Alpha is a bar, a0, a1 ,..., a_sigma
     return alpha, A
-
-
 
 def find_interval(point, Theta, T_i):
     """
@@ -292,12 +291,14 @@ def create_cells(data, T_i):
 
     return np.vstack((theta_x, theta_y))
 
-def create_shards(params, full_lst, psi):
+def create_shards(params, full_lst, psi, cells=None):
     """
     Create the shards based on the params.
 
     params: List of tuples for index i, representing F_i(x). In other words, contains alpha, beta, and the resulting calculation of F_i(x).
     full_lst: List of points including mapping in the first column.
+    psi: The expected number of items in a shard
+    cells: A list of cells that a shard can potentially belong to.
 
     Returns a list of shards. shards[i] corresponds to the shard prediction function for learned function F_i
     """
@@ -310,13 +311,16 @@ def create_shards(params, full_lst, psi):
         alpha, beta, f = e
         V = len(f)
         shard_start_id = i * D
-        shard_ind = Shard_index()
+        shard_ind = Shard_index(i)
         positions = np.floor(f/psi).flatten()
 
         # From the predicted positions, add them to the shard.
         for position in positions:
             position = int(position)
             shard_ind.append(position, points[count])
+            curr_mapping = points[count][0]
+            curr_mapping = int(np.floor(curr_mapping))
+            cells[curr_mapping].add_shard((i, position))
             count += 1
         shard_ind.calculate()
         shards.append(shard_ind)
@@ -370,10 +374,10 @@ def decompose_query(Theta, bottom_left, top_right):
     lst_x = [x_1] if x_1 > Theta[0][0] else [Theta[0][0]]
     lst_y = [y_1] if y_1 > Theta[1][0] else [Theta[1][0]]
     for i in Theta[0]: # Dimension x
-        if x_1 <= i < x_2:
+        if x_1 < i < x_2:
             lst_x.append(i)
     for i in Theta[1]: # Dimension y
-        if y_1 <= i < y_2:
+        if y_1 < i < y_2:
             lst_y.append(i)
     lst_x.append(x_2)
     lst_y.append(y_2)
@@ -402,6 +406,23 @@ def shard_prediction(mapping, index, params, psi):
     return np.floor(total/psi)
 
 def shard_get(index, lower, upper, shards, psi, lmap, umap):
+    """
+    Returns all the data points within a shard at index and with id in the interval [lower, upper] with points with mapping satisfying lmap <= mapping <= upper
+    Also returns a set of pages in the form (index, id, page number) that was used to access these points.
+
+    Get data points from a shard at index index. Get from shard ids lower to upper.
+
+    Use lmap and umap to get specific lower mapping and upper mappings and thus which
+    pages to access.
+    
+    index: integer representing the index of the shard_index to access
+    lower: integer represenitng the lower shard_id we need to access
+    upper: integer representing the upper shard_id we need to access
+    shards: the entire shard list containing all the shard_index
+    psi: The average number of datapoints per page
+    lmap: the lower mapping that we are looking for
+    umap: The upper mapping that we are limiting our search for.
+    """
     k = []
     page_set = set()
     pages = 0
@@ -489,7 +510,7 @@ def shard_get(index, lower, upper, shards, psi, lmap, umap):
 
 def find_points(points, params, shards, M, T_i, psi, Theta):
     """
-    points is a N x 2 list of points that we need to calculate the shards on.
+    points is a list of tuples. These tuples are of form (bottom_left, top_right), where both bottom_left and top_right are 1x2 np arrays.
     params is a K X 3 list representing alpha, beta, and F_i in that order
     shards is a list of dictionaries that represents what each shard[i] sets.
     M is a 1 x M lenght list representing the partition points.
@@ -543,21 +564,27 @@ def find_points(points, params, shards, M, T_i, psi, Theta):
 
     return answer, pages, page_set
 
-def visualize(Theta, lst, T_i, params, psi, M):
+def visualize(Theta, lst, T_i, params, psi, M, cells):
     x = np.take(lst, 0, 1)
     y = np.take(lst, 1, 1)
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    for i in range(T_i[0]): # We need to know the length of the T_i
-        for j in range(T_i[1]):
-            ax.add_patch(Rectangle(xy=(Theta[0][i], Theta[1][j]), width=Theta[0][i+1]-Theta[0][i], height=Theta[1][j+1]-Theta[1][j], fill=False, color='blue'))
+    # for i in range(T_i[0]): # We need to know the length of the T_i
+    #    for j in range(T_i[1]):
+    #        ax.add_patch(Rectangle(xy=(Theta[0][i], Theta[1][j]), width=Theta[0][i+1]-Theta[0][i], height=Theta[1][j+1]-Theta[1][j], fill=False, color='blue'))
+
+    for i in cells:
+        bottom_left = i.bounding_rectangle[0]
+        top_right = i.bounding_rectangle[1]
+        ax.add_patch(Rectangle(xy=(bottom_left[0], bottom_left[1]), width = top_right[0] - bottom_left[0], height = top_right[1] - bottom_left[1], fill=False, color='purple'))
+        ax.annotate(f'{i.mapping}',top_right)
     ax.scatter(x, y, color='red')
     i = 0
     # while i < lst.shape[0]:
     #     mapping = mapping_function(lst[i], Theta, T_i)
     #     ind = M.index(binary_search(mapping, M, 0, len(M) - 2)[0])
     #     shard_pos = shard_prediction(mapping, ind, params, psi)
-    #     # ax.annotate(f"({ind}, {shard_pos})", lst[i])
+    #     ax.annotate(f"({ind}, {shard_pos})", lst[i])
     #     i += 1
 
     plt.show()
@@ -569,6 +596,108 @@ def in_query(point, q_rectangle):
 
     x_p, y_p = point
     return x_l <= x_p <= x_u and y_l <= y_p <= y_u
+
+def sort_branches(branches, min_dist_ordering=False):
+    """
+    Sort branches based off of min_dist/min_max_dist.
+
+    If min_dist_ordering is true, sort by min_dist. Otherwise, sort by min_max_dist
+
+    branches a list of the form (min_max_dist, min_dist, object)
+
+    Returns a sorted list in descending order.
+    """
+    sort = 1 if min_dist_ordering is True else 0
+    branches = np.asarray(branches)
+    branches = branches[np.argsort(branches[:,sort])]
+    return list(branches)
+
+def find_nearest(results, point, nearest, k):
+    """
+    Given a list of results, find those that are closer to the point and update nearest as we see fit.
+
+    results: List of found points that were found in the region.
+    point: The point to look for closest to
+    nearest: The current array of closest points.
+    """
+    for i in results:
+        dist = distance(i[1:], point) ** 2 # Use squared distance to keep in accordance.
+        dist_entry = np.insert(i[1:], 0, dist)
+        if len(nearest) < k:
+            nearest.append(dist_entry)
+        else:
+            nearest = np.asarray(nearest)
+            max_dist = np.max(np.take(nearest, 0, 1))
+            if dist < max_dist:
+                nearest = np.asarray(nearest)
+                nearest = np.concatenate((nearest, dist_entry.reshape(1,3)), 0)
+                nearest = nearest[np.argsort(nearest[:,0])][:k] # Take the closest k elements
+            nearest = list(nearest)
+    return nearest
+
+def KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells):
+    # Generate cells to visit by mindist/minmaxdist.
+    nearest = []
+    pages = 0
+    branches = []
+    page_set = set()
+    for i in cells:
+        # Force prune to never happen based off of minmaxdist
+        # Set min_max_dist to infinity because cells aren't MBRs.
+        branches.append((float('inf'), min_dist(point, i.bounding_rectangle), i))
+    branches = sort_branches(branches, True)
+    branches = prune(branches, nearest, k)
+
+    while len(branches) > 0:
+        cell = branches.pop(0)[-1]
+
+        to_visit = []
+
+        # Grab the shards within the cell
+        # Sort them based off of the closest bounding rectangle
+        # TODO: Maybe instead of adding every bounding rectangle or "closest bounding rectangle", why not just add the rectangle that overlaps with
+        # the cell that we are visiting?
+        for shard_index in cell.shards:
+            ind, id = shard_index
+            shard = shards[ind].get(id)
+
+            # Get all the bounding rectangles associated with this shard. Only "visit" based on the closest min_dist to the point.
+            entries = np.asarray([(min_max_dist(point, br.rectangle), min_dist(point, br.rectangle), ind, br, shard) for br in shard.get_bounding_rectangles()])
+            to_visit.extend(entries[np.argsort(entries[:,1])])
+        to_visit = sort_branches(to_visit)
+
+        # Do downwards pruning
+        to_visit = prune(to_visit, nearest, k)
+        while len(to_visit) > 0:
+            print("NEXT")
+            #TODO: DO NOT JUST LOOK FOR THE BOUNDING RECTANGLE
+            # This bounding rectangle can overlap many different shards, resulting in additional accesses.
+            # We need to access the relevant shard ONLY as well as the bounding rectangle around this relevant shard.
+
+            # TODO: USE SHARD_GET INSTEAD OF FIND_POINTS to keep it relevant to the specific shard.
+            _, _, index, rect, shard = to_visit.pop(0)
+            results = []
+
+            # From the shard, get the pages that are needed to get at least this rectangle.
+            get_results, _, ps = shard_get(index, shard.id, shard.id, shards, psi, rect.lower_mapping, rect.upper_mapping)
+            
+            # Using the pages, we go to each of them if we never visited them. If we already visited them,
+            # then results already has taken them into consideration.
+            for i in ps:
+                if i not in page_set:
+                    results.extend(shard.get_page(i[-1], psi))
+            page_set.update(ps)
+
+
+            nearest = find_nearest(results, point, nearest, k)
+            print(ps)
+
+            # Do pruning amongst the shard set
+            to_visit = prune(to_visit, nearest, k)
+        
+        branches = prune(branches, nearest, k) # Prune the branches based off of increasing nearest.
+    print(page_set)
+    return nearest, len(page_set)
 
 def KNN(k, delta, point, Theta, params, shards, M, T_i, psi):
     """
@@ -648,8 +777,20 @@ def test_1000():
         M.append(i.max())
     psi = 50
     params = train(partitions, 3, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+    bounding_rectangles = decompose_query(Theta, np.asarray((Theta[0][0], Theta[1][0])), np.asarray((Theta[0][-1], Theta[1][-1])))
+    cells = []
+    for i in range(len(bounding_rectangles)):
+        cells.append(Cell(i, bounding_rectangles[i]))
+
+    shards = create_shards(params, full_lst, psi, cells)
+    for i in cells:
+        print(i.mapping, i.shards)
+
     pdb.set_trace()
-    shards = create_shards(params, full_lst, psi)
+    for shard_ind in shards:
+        for shard_id in shard_ind.get_keys():
+            shard = shard_ind.get(shard_id)
+            print(shard.lower_mapping, shard.upper_mapping, len(shard.bounding_rectangles), (shard_ind.get_id(), shard.id))
 
     min_x = np.min(lst[:,0])
     min_y = np.min(lst[:,1])
@@ -657,6 +798,7 @@ def test_1000():
     pdb.set_trace()
     # q_rects = generate_qrects(min_x, min_y, max_x, max_y)
     # pickle.dump(q_rects, open("query_rectangles_long_beach.dump", 'wb'))
+    
     
     q_rects = pickle.load(open("query_rectangles_100_100x100.dump", "rb"))
     total_p = 0
@@ -670,6 +812,23 @@ def test_1000():
         print(len(page_set))
         count += 1
     print(f"Average page lookup {total_p/100}.")
+
+    # visualize(Theta, lst, T_i,params, psi, M, cells )
+    
+    KNN_random_points = pickle.load(open('qpoints_100.dump', 'rb'))
+    point = KNN_random_points[-2]
+    pages = 0
+    k = 10
+    pdb.set_trace()
+    nearest, p = KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells)
+
+    for point in KNN_random_points:
+        nearest, p = KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells)
+        pages += p
+        print(f"Point: {point}")
+        print(f"Neighbours: {np.asarray(nearest)}")
+        print(f"Pages: {p}")
+    print(f"Average pages: {pages/100}")
 
     # KNN TESTING!
     # num_rand_points = 10
