@@ -34,11 +34,11 @@ def prune(branches, nearest, k):
         prune_set = set()
         for i, e in enumerate(lst):
             curr_min_max_dist = e[0]
-            for j, element in enumerate(lst):
-                if j == i:
-                    continue
-                if element[1] > curr_min_max_dist or element[1] > max_nearest:
-                    prune_set.add(j)
+            # if i in prune_set:
+            #     continue
+            if e[1] > max_nearest:
+                prune_set.add(i)
+
         if len(prune_set) == 0:
             # Finished pruning.
             break
@@ -400,11 +400,13 @@ def traverse(root, fig):
 def test_long_beach():
     root = RTree()
     lst = pickle.load(open('LB.dump', 'rb'))
+    root = pickle.load(open("LB_rtree.obj", 'rb'))
     fig = plt.figure()
 
     ax = fig.add_subplot(111)
-    for i in lst:
-        root.insert(i)
+    #for i in lst:
+    #    root.insert(i)
+    #pickle.dump(root, open("LB_rtree.obj", 'wb'))
     x = np.take(lst,0, 1)
     y = np.take(lst, 1, 1)
     ax.scatter(x,y, color = 'red')
@@ -416,6 +418,8 @@ def test_long_beach():
         i = np.asarray(i)
         result, pages = root.root.search(i)
         print(f"Results: {len(result)}")
+        # actual = [point for point in lst if overlap(point, i)]
+        # print(f"Actual: {len(actual)}")
         total += pages
         print(f'Pages {pages}')
         count += 1
@@ -429,10 +433,15 @@ def test_long_beach():
     total = 0
 
     print("KNN Testing!")
+    k = 10
     
     for i in q_points:
-        neighbours, pages = root.root.KNN(i, [], 3)
+        neighbours, pages = root.root.KNN(i, [], k)
         neighbours = np.asarray(neighbours)
+        actual = np.asarray([np.asarray((distance(point, i), point[0], point[1])) for point in lst])
+        actual = actual[np.argsort(actual[:,0])]
+        print(actual[:k])
+
         total += pages
         print(f'Point {i}')
         print(f'Neighbours {neighbours}')
@@ -491,8 +500,8 @@ def test_1000():
     traverse(root.root, ax)
     plt.show()
 if __name__ == '__main__':
-    test_1000()
-    # test_long_beach()
+    # test_1000()
+    test_long_beach()
     # pdb.set_trace()
     # root = RTree()
     # root.insert((2,3))

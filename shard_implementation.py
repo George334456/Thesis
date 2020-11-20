@@ -89,10 +89,11 @@ class Shard:
         count = 0
         for i in range(int(self.lower_mapping), int(self.upper_mapping) + 1):
             point_lst = [point[1:] for point in points if i <= point[0] < i + 1]
-            rect = Rectangle(count, bounding_rectangle(point_lst))
-            rect.set_mappings(i, i+1)
-            self.bounding_rectangles.append(rect)
-            count += 1
+            if point_lst:
+                rect = Rectangle(count, bounding_rectangle(point_lst))
+                rect.set_mappings(i, i+1)
+                self.bounding_rectangles.append(rect)
+                count += 1
 
     def get_page(self, page, psi):
         """

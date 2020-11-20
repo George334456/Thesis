@@ -98,7 +98,7 @@ def train(partitions, sigma, psi):
             if curr_beta_lr is not None:
                 # We found something that had loss minimizing.
                 beta = curr_beta_lr
-                num_iterations += 1
+                num_iterations += 1 
                 if orig_loss - curr_loss < 0.001:
                     break
                 orig_loss = curr_loss
@@ -495,7 +495,7 @@ def shard_get(index, lower, upper, shards, psi, lmap, umap):
                 data = shard_ind.get(i).get_data()
                 res = [i for i, e in enumerate(data) if lmap <= e[0] <=umap]
                 if len(res) == 0: # No mapping was found in this range
-                    print("Hmmm")
+                    # print("Hmmm")
                     continue
                 else:
                     start = min(res)
@@ -607,6 +607,8 @@ def sort_branches(branches, min_dist_ordering=False):
 
     Returns a sorted list in descending order.
     """
+    if branches == []:
+        return []
     sort = 1 if min_dist_ordering is True else 0
     branches = np.asarray(branches)
     branches = branches[np.argsort(branches[:,sort])]
@@ -664,12 +666,13 @@ def KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells):
             # Get all the bounding rectangles associated with this shard. Only "visit" based on the closest min_dist to the point.
             entries = np.asarray([(min_max_dist(point, br.rectangle), min_dist(point, br.rectangle), ind, br, shard) for br in shard.get_bounding_rectangles()])
             to_visit.extend(entries[np.argsort(entries[:,1])])
+
+        # pdb.set_trace()
         to_visit = sort_branches(to_visit)
 
         # Do downwards pruning
         to_visit = prune(to_visit, nearest, k)
         while len(to_visit) > 0:
-            print("NEXT")
             #TODO: DO NOT JUST LOOK FOR THE BOUNDING RECTANGLE
             # This bounding rectangle can overlap many different shards, resulting in additional accesses.
             # We need to access the relevant shard ONLY as well as the bounding rectangle around this relevant shard.
@@ -690,13 +693,11 @@ def KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells):
 
 
             nearest = find_nearest(results, point, nearest, k)
-            print(ps)
 
             # Do pruning amongst the shard set
             to_visit = prune(to_visit, nearest, k)
         
         branches = prune(branches, nearest, k) # Prune the branches based off of increasing nearest.
-    print(page_set)
     return nearest, len(page_set)
 
 def KNN(k, delta, point, Theta, params, shards, M, T_i, psi):
@@ -886,13 +887,19 @@ def test_1000():
 
 def test_long_beach():
     lst = pickle.load(open('LB.dump', 'rb'))
-    params, shards, M, T_i, psi, Theta = pickle.load(open("long_beach_lisa_10bp.obj", 'rb'))
+    params, shards, M, T_i, psi, Theta, cells = pickle.load(open("long_beach_lisa_10bp.obj", 'rb'))
 
     # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
-    # params, shards, M, T_i, psi, Theta = pickle.load(open('long_beach_lisa.obj', 'rb'))
     # T_i = [100, 100]
 
     # Theta = create_cells(lst, T_i)
+    # pdb.set_trace()
+
+    # bounding_rectangles = decompose_query(Theta, np.asarray((Theta[0][0], Theta[1][0])), np.asarray((Theta[0][-1], Theta[1][-1])))
+    # cells = []
+    # for i in range(len(bounding_rectangles)):
+    #     cells.append(Cell(i, bounding_rectangles[i]))
+
     # pdb.set_trace()
 
     # partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 10) # Create 10 equal length partitions of the mapping space.
@@ -902,8 +909,8 @@ def test_long_beach():
     #     M.append(i.max())
     # psi = 50
     # params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
-    # shards = create_shards(params, full_lst, psi)
-    # pickle.dump([params, shards, M, T_i, psi, Theta], open("long_beach_lisa_10bp.obj", 'wb'))
+    # shards = create_shards(params, full_lst, psi, cells)
+    # pickle.dump([params, shards, M, T_i, psi, Theta, cells], open("long_beach_lisa_10bp.obj", 'wb'))
 
     min_x = np.min(lst[:,0])
     min_y = np.min(lst[:,1])
@@ -927,70 +934,59 @@ def test_long_beach():
     
     max_point = max(max_x, max_y)
     min_point = min(min_x, min_y)
-    KNN_random_points = generate_numbers(min_point,max_point, 10) # Grab randomly, 10 elements.
     pdb.set_trace()
-    average_dist = 0
-    average_pages = 0
-    K = 3
-    print("TRAINING")
-    for p in KNN_random_points:
-        delta = 1
-        pages = 0
-        while(True):
-            print(delta)
-            ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi) # KNN with 3 neighbours.
-            print(pages)
-            pages += k_pages
-            if ans.shape[0] < K:
-                delta += delta
-            else:
-                max_dist = np.max(ans[:,0])
-                average_pages += pages
-                average_dist += max_dist
-                print(f"Point {p}")
-                print(f'Neighbours {ans}\nPages: {pages}')
-                break
-    average_dist = average_dist/10
-    average_pages = average_pages/10
-    
-    print(average_dist)
-    average_pages = 0
+    KNN_random_points = pickle.load(open('qpoints_LB.dump', 'rb'))
+    # KNN_random_points = generate_numbers(min_point, max_point, 100)
+    # pickle.dump(KNN_random_points, open('qpoints_LB.dump','wb'))
+
+    pages = 0
+    K = 10
+    for point in KNN_random_points:
+        nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+        pages += p
+        actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+        actual = actual[np.argsort(actual[:,0])][:K]
+        print(f"Point: {point}")
+        print(f"Neighbours: {np.asarray(nearest)}")
+        print(f"Actual: {actual}")
+        print(f"Pages: {p}")
+    print(f"Average pages: {pages/100}")
 
     # Real query time.
-    print("TESTING")
-    KNN_random_points = generate_numbers(min_point, max_point, 100)
-    pickle.dump(KNN_random_points, open('qpoints_LB.dump','wb'))
-    KNN_random_point = pickle.load(open('qpoints_LB.dump', 'rb'))
-    # KNN_random_points = pickle.load(open('qpoints_100.dump', 'rb'))
-    pdb.set_trace()
-    delta = 1
-    # delta = average_dist
-    for p in KNN_random_points:
-        delta = 1
-        pages = 0
-        while True:
-            ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi)
-            if len(ans)> 1:
-                print(ans, delta)
-            if ans.shape[0] < K:
-                delta += 1
-                # mult_factor = 2
-                # if ans.shape[0] > 0:
-                #     mult_factor = math.sqrt(K/ans.shape[0])
-                # delta = delta * mult_factor
-            else:
-                average_pages += k_pages
+    # print("TESTING")
+    # KNN_random_points = generate_numbers(min_point, max_point, 100)
+    # pickle.dump(KNN_random_points, open('qpoints_LB.dump','wb'))
+    # KNN_random_point = pickle.load(open('qpoints_LB.dump', 'rb'))
+    # # KNN_random_points = pickle.load(open('qpoints_100.dump', 'rb'))
+    # pdb.set_trace()
+    # delta = 1
+    # # delta = average_dist
+    # for p in KNN_random_points:
+    #     delta = 1
+    #     pages = 0
+    #     while True:
+    #         ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi)
+    #         if len(ans)> 1:
+    #             print(ans, delta)
+    #         if ans.shape[0] < K:
+    #             delta += 1
+    #             # mult_factor = 2
+    #             # if ans.shape[0] > 0:
+    #             #     mult_factor = math.sqrt(K/ans.shape[0])
+    #             # delta = delta * mult_factor
+    #         else:
+    #             average_pages += k_pages
 
-                print(f"Point {p}")
-                print(f'Neighbours {ans}\nPages: {k_pages}')
-                break
-    print(average_pages/100)
-    visualize(Theta, lst, T_i,params, psi, M )
+    #             print(f"Point {p}")
+    #             print(f'Neighbours {ans}\nPages: {k_pages}')
+    #             break
+    # print(average_pages/100)
+    # visualize(Theta, lst, T_i,params, psi, M )
 
 if __name__ == "__main__":
 
-    test_1000()
-    # test_long_beach()
+    # test_1000()
+    test_long_beach()
     pdb.set_trace()
     # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
     
