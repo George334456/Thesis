@@ -764,6 +764,72 @@ def generate_qrects(min_x, min_y, max_x, max_y):
 
         k.append((np.asarray(((x,y))),np.asarray((x + len_x, y+len_y))))
     return k
+
+def test_synthetics():
+    for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
+        lst = pickle.load(open(f'synthetic_{amount}.dump', 'rb'))
+        T_i = [100, 100]
+        Theta = create_cells(lst, T_i)
+        partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 10)
+        M = [partitions[0][0]]
+        for i in partitions:
+            M.append(i.max())
+        psi = 50
+        params = train(partitions, 3, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+        bounding_rectangles = decompose_query(Theta, np.asarray((Theta[0][0], Theta[1][0])), np.asarray((Theta[0][-1], Theta[1][-1])))
+        cells = []
+        for i in range(len(bounding_rectangles)):
+            cells.append(Cell(i, bounding_rectangles[i]))
+
+        shards = create_shards(params, full_lst, psi, cells)
+    
+        for i in cells:
+            print(i.mapping, i.shards)
+        for shard_ind in shards:
+            for shard_id in shard_ind.get_keys():
+                shard = shard_ind.get(shard_id)
+                print(shard.lower_mapping, shard.upper_mapping, len(shard.bounding_rectangles), (shard_ind.get_id(), shard.id))
+
+        min_x = np.min(lst[:,0])
+        min_y = np.min(lst[:,1])
+        max_x, max_y = np.max(lst[:,0]), np.max(lst[:,1])
+        pdb.set_trace()
+        q_rects = generate_qrects(min_x, min_y, max_x, max_y)
+        pickle.dump(q_rects, open(f"synthetic_qrects_{amount}.dump", "wb"))
+        q_rects = pickle.load(open(f"synthetic_qrects_{amount}.dump", "rb"))
+
+        total_p = 0
+        count = 0
+        for i in q_rects:
+            points = decompose_query(Theta, i[0], i[1])
+            return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
+            final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
+            total_p += len(page_set)
+            print(f"Results: {len(final_results)}")
+            print(len(page_set))
+            count += 1
+        print(f"Average page lookup {total_p/100}.")
+
+        KNN_random_points = generate_numbers(0, 8000, 100)
+        pickle.dump(KNN_random_points, open(f"synthetic_qpoints_{amount}.dump", "wb"))
+        KNN_random_points = pickle.load(open(f"synthetic_qpoints_{amount}.dump", "rb"))
+
+        pages = 0
+        pdb.set_trace()
+
+        for K in [1, 5, 10, 50, 100, 500]:
+
+            for point in KNN_random_points:
+                nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+                pages += p
+                actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+                actual = actual[np.argsort(actual[:,0])][:K]
+                print(actual[:,1:] == np.asarray(nearest)[:,1:])
+                print(f"Point: {point}")
+                print(f"Neighbours: {np.asarray(nearest)}")
+                print(f"Pages: {p}")
+            print(f"Average pages for {K}: {pages/100}")
+
     
 def test_1000():
     lst = pickle.load(open('data_1000.dump', 'rb'))
@@ -986,7 +1052,8 @@ def test_long_beach():
 if __name__ == "__main__":
 
     # test_1000()
-    test_long_beach()
+    test_synthetics()
+    # test_long_beach()
     pdb.set_trace()
     # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
     

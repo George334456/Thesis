@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import heapq
 import math
+import pickle
 
 def rebalance(dest, src, dest_center, src_center, m):
     """
@@ -63,28 +64,8 @@ def distance(p1, p2):
 
 
 if __name__ == '__main__':
-    lst = generate_numbers(50, 60, 3)
-    lst2 = generate_numbers(0, 10, 10)
-    lst = np.vstack((lst, lst2))
-    X = np.take(lst, 0, 1) # TAke along the y axis.
-    Y = np.take(lst, 1, 1)
-    lst1, lst2, kmeans = cluster(lst, 10)
-    
-    # print(lst1)
-    # print(lst2)
-    print(kmeans.cluster_centers_)
-    
-    X_1 = np.take(lst1,0,1)
-    Y_1 = np.take(lst1,1,1)
+    for i in [1000, 4000, 8000, 16000, 32000, 64000]:
+        lst = generate_numbers(0, 8000, i)
+        pickle.dump(lst, open(f"synthetic_{i}.dump", "wb"))
 
-    X_2 = np.take(lst2, 0, 1)
-    Y_2 = np.take(lst2, 1, 1)
     
-    plt.plot(X, Y, '.', color='black')
-
-    plt.plot(X_1 , Y_1, '.', color='green')
-    plt.plot(X_2, Y_2, '.', color='blue')
-    cluster_x = np.take(kmeans.cluster_centers_, 0, 1)
-    cluster_y = np.take(kmeans.cluster_centers_, 1, 1)
-    plt.plot(cluster_x, cluster_y, '.', color='red')
-    plt.show()

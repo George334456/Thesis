@@ -400,13 +400,13 @@ def traverse(root, fig):
 def test_long_beach():
     root = RTree()
     lst = pickle.load(open('LB.dump', 'rb'))
-    root = pickle.load(open("LB_rtree.obj", 'rb'))
+    # root = pickle.load(open("LB_rtree.obj", 'rb'))
     fig = plt.figure()
 
     ax = fig.add_subplot(111)
-    #for i in lst:
-    #    root.insert(i)
-    #pickle.dump(root, open("LB_rtree.obj", 'wb'))
+    for i in lst:
+        root.insert(i)
+    pickle.dump(root, open("LB_rtree.obj", 'wb'))
     x = np.take(lst,0, 1)
     y = np.take(lst, 1, 1)
     ax.scatter(x,y, color = 'red')
@@ -433,7 +433,7 @@ def test_long_beach():
     total = 0
 
     print("KNN Testing!")
-    k = 10
+    k = 3
     
     for i in q_points:
         neighbours, pages = root.root.KNN(i, [], k)
@@ -493,6 +493,11 @@ def test_1000():
         total += pages
         print(f'Point {i}')
         print(f'Neighbours {neighbours}')
+        actual = np.asarray([np.asarray((distance(point, i), point[0], point[1])) for point in lst])
+        actual = actual[np.argsort(actual[:,0])][:K]
+        print(f"Actual {actual}")
+        for i in actual:
+            print(i)
         print(f'Pages {pages}')
     print(f'Average pages is {total/100}')
 
