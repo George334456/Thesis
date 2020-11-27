@@ -7,7 +7,7 @@ import pdb
 import pickle
 
 M =50 # Arbitrarily set M.
-
+# M = 2
 def distance(point1, point2):
     """
     Calculate the distance between 2 points
@@ -158,6 +158,7 @@ class RTree_node:
     This class represents the internal nodes of an R-tree
     The children are going to be addresses of a lower node. The rectangle will cover the entire points encapsulated by the children.
     """
+    ID = 0
     def __init__(self, rectangle: List, children, parent, data_points = []):
         """Sets the stuff for a node
 
@@ -169,6 +170,8 @@ class RTree_node:
         self.rectangle = rectangle
         self.children = children
         self.data_points = data_points
+        self.id = RTree_node.ID
+        RTree_node.ID += 1
     
     def insert_to_leaf(self, point):
         """
@@ -240,6 +243,8 @@ class RTree_node:
             arr = np.array(lst)
             lst1, lst2, kmeans = cluster(arr, M)
             node2 = RTree_node([], [self.children[mapping[tuple(i)]] for i in lst2], self.parent, [])
+            for child in node2.children:
+                child.parent = node2
 
             self.children = [self.children[mapping[tuple(i)]] for i in lst1]
             self.data_points = []
@@ -255,22 +260,44 @@ class RTree_node:
         # Start at root
         ans = []
         pages = 1 # Have to read self once.
+        ids_found = []
 
         if self.children == []:
             # We are a leaf node.
             for i in self.data_points:
                 if overlap(i, rectangle):
                     ans.append(i)
+                    ids_found.append(self.id)
         else:
             # Loop through children
             # Let's use DFS for this.
             for child in self.children:
                 rect = child.rectangle
                 if overlap_rectangles(rect, rectangle):
-                    a, p = child.search(rectangle)
+                    a, p, new_ids = child.search(rectangle)
                     ans.extend(a)
+                    ids_found.extend(new_ids)
                     pages += p
-        return ans, pages
+        return ans, pages, ids_found
+
+    def parent_chain(self):
+        chain = [self.id]
+        curr = self.parent
+        while curr is not None:
+            chain.append(curr.id)
+            curr = curr.parent
+        return chain
+
+    def get_by_id(self, id):
+        if self.id == id:
+            return self
+        else:
+            for i in self.children:
+                k = i.get_by_id(id)
+                if k:
+                    return k
+            return False
+
 
     def KNN(self, point, nearest, k):
         """
@@ -304,14 +331,12 @@ class RTree_node:
             branches = list(branches)
             branches = prune(branches, nearest, k)
 
-            i = 0
-            while i < len(branches):
-                child = branches[i][2]
+            while len(branches) > 0:
+                child = branches.pop(0)[2]
                 nearest, p = child.KNN(point, nearest, k)
                 pages += p
                 branches = prune(branches, nearest, k)
 
-                i += 1
         return nearest, pages
 
         
@@ -320,7 +345,12 @@ class RTree:
     Implementation of an R-Tree. It only stores the root.
     """
     def __init__(self):
-        self.root = RTree_node([], [], None)
+        """
+        Initialize a root node with no bounding rectangle, no children, no parent, and no data points.
+        """
+        RTree_node.ID = 0
+        self.root = RTree_node([], [], None, [])
+        self.data = []
 
 
     def adjust_tree(self, n1, n2):
@@ -344,9 +374,7 @@ class RTree:
             p1.rectangle = adjust_rectangle(p1)
            
             return self.adjust_tree(p1, p2)
-
-            
-        pass
+    
     def chooseLeaf(self, start: RTree_node, point: Tuple[float, float]):
         curr = start
         if curr.children == []:
@@ -370,6 +398,7 @@ class RTree:
             return self.chooseLeaf(min_node, point)
 
     def insert(self, point: Tuple[float, float]):
+        self.data.append(point)
         leaf = self.chooseLeaf(self.root, point)
         n1, n2 = leaf.insert_to_leaf(np.array(point))
         n1, n2 = self.adjust_tree(n1, n2)
@@ -379,7 +408,14 @@ class RTree:
             n1.parent = self.root
             n2.parent = self.root
 
-                    
+def data_len(root):
+    if root.children == []:
+        return len(root.data_points)
+    else:
+        length = 0
+        for i in root.children:
+            length += data_len(i)
+        return length
 
 def traverse(root, fig):
     if root.children == []:
@@ -416,7 +452,7 @@ def test_long_beach():
     count = 0
     for i in q_rects:
         i = np.asarray(i)
-        result, pages = root.root.search(i)
+        result, pages, ids = root.root.search(i)
         print(f"Results: {len(result)}")
         # actual = [point for point in lst if overlap(point, i)]
         # print(f"Actual: {len(actual)}")
@@ -425,7 +461,7 @@ def test_long_beach():
         count += 1
     print(f'Average pages {total/100}')
 
-    result, pages = root.root.search(np.asarray(((20, 20), (45, 45))))
+    result, pages, ids = root.root.search(np.asarray(((20, 20), (45, 45))))
     print(f'pages {pages}')
 
     q_points = pickle.load(open('qpoints_LB.dump', 'rb'))
@@ -433,24 +469,82 @@ def test_long_beach():
     total = 0
 
     print("KNN Testing!")
-    k = 3
-    
-    for i in q_points:
-        neighbours, pages = root.root.KNN(i, [], k)
-        neighbours = np.asarray(neighbours)
-        actual = np.asarray([np.asarray((distance(point, i), point[0], point[1])) for point in lst])
-        actual = actual[np.argsort(actual[:,0])]
-        print(actual[:k])
+    f = open("rtree_long_beach_results.txt", 'w')
+    f.close()
+   
+    for k in [1,5,10, 50,100, 500]:
+        for i in q_points:
+            neighbours, pages = root.root.KNN(i, [], k)
+            neighbours = np.asarray(neighbours)
+            actual = np.asarray([np.asarray((distance(point, i), point[0], point[1])) for point in lst])
+            actual = actual[np.argsort(actual[:,0])]
+            print(actual[:k])
 
-        total += pages
-        print(f'Point {i}')
-        print(f'Neighbours {neighbours}')
-        print(f'Pages {pages}')
-    print(f'Average pages is {total/100}')
+            total += pages
+            print(f'Point {i}')
+            print(f'Neighbours {neighbours}')
+            print(f'Pages {pages}')
+        with open("rtree_long_beach_results.txt", 'a') as out:
+            out.write(f'Average pages for {k}: {total/100}\n')
+        print(f'Average pages is {total/100}')
 
-    pdb.set_trace()
     traverse(root.root, ax)
     plt.show()
+
+def test_synthetics():
+    open("rtree_synthetic.txt", 'w')
+    # for amount in [64000]: 
+    for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
+        lst = pickle.load(open(f'synthetic_{amount}.dump', 'rb'))
+        root = RTree()
+        for i in lst:
+            # print(data_len(root.root))
+            root.insert(i)
+
+        # root.root.search(np.asarray(((1446, 322), (1447, 323))))
+        q_rects = pickle.load(open(f'synthetic_qrects_{amount}.dump', 'rb'))
+        total = 0
+
+        count = 0
+        for i in q_rects:
+            i = np.asarray(i)
+            result, pages, ids = root.root.search(i)
+            actual = [point for point in lst if overlap(point, i)]
+            print(f"Actual: {len(actual)}")
+            print(f'results: {len(result)}')
+            total += pages
+            print(f'Pages {pages}')
+            count += 1
+        print(f'Average pages {total/100}')
+
+        KNN_random_points = pickle.load(open(f'synthetic_qpoints_{amount}.dump', 'rb'))
+        pages = 0
+        count = 0
+        # for K in [100]:
+        for K in [1, 5, 10, 50, 100, 500]:
+            for point in KNN_random_points:
+                neighbours, p = root.root.KNN(point, [], K)
+                neighbours = np.asarray(neighbours)
+                pages += p
+                actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+                actual = actual[np.argsort(actual[:,0])][:K]
+                if not (actual[:, 1:] == np.asarray(neighbours[:, 1:])).all():
+                    pdb.set_trace()
+                    print(data_len(root.root))
+                    root.root.KNN(point, [], K)
+                    print(actual)
+                    print(neighbours)
+                    raise Exception(amount, count)
+                    print(amount)
+                # print(actual[:, 1:] == np.asarray(neighbours)[:, 1:])
+                print(f"Point: {point}")
+                print(f"Neighbours: {neighbours}")
+                print(f'Pages {p}')
+                count += 1
+            with open("rtree_synthetic.txt", 'a') as output:
+                output.write(f"Average pages for {K} on synthetic points {amount}: {pages/100}.\n")
+            print(f"Average pages for {K}: {pages/100}")
+
 
 def test_1000():
     root = RTree()
@@ -469,14 +563,14 @@ def test_1000():
     count = 0
     for i in q_rects:
         i = np.asarray(i)
-        result, pages = root.root.search(i)
+        result, pages, ids = root.root.search(i)
         print(f"Results: {len(result)}")
         total += pages
         print(f'Pages {pages}')
         count += 1
     print(f'Average pages {total/100}')
 
-    result, pages = root.root.search(np.asarray(((20, 20), (45, 45))))
+    result, pages, ids = root.root.search(np.asarray(((20, 20), (45, 45))))
     print(f'pages {pages}')
 
     q_points = pickle.load(open('qpoints_100.dump', 'rb'))
@@ -499,12 +593,19 @@ def test_1000():
         for i in actual:
             print(i)
         print(f'Pages {pages}')
-    print(f'Average pages is {total/100}')
+    print(f'Average pages is {total/100}\n')
 
     pdb.set_trace()
     traverse(root.root, ax)
     plt.show()
 if __name__ == '__main__':
+    # pdb.set_trace()
+    # root = RTree()
+    # lst = generate_numbers(0, 100, 100)
+    # for i in range(5):
+    #     pdb.set_trace()
+    #     root.insert(lst[i])
+    # test_synthetics()
     # test_1000()
     test_long_beach()
     # pdb.set_trace()

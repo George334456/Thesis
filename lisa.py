@@ -569,15 +569,14 @@ def visualize(Theta, lst, T_i, params, psi, M, cells):
     y = np.take(lst, 1, 1)
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    # for i in range(T_i[0]): # We need to know the length of the T_i
-    #    for j in range(T_i[1]):
-    #        ax.add_patch(Rectangle(xy=(Theta[0][i], Theta[1][j]), width=Theta[0][i+1]-Theta[0][i], height=Theta[1][j+1]-Theta[1][j], fill=False, color='blue'))
+    for i in range(T_i[0]): # We need to know the length of the T_i
+       for j in range(T_i[1]):
+           ax.add_patch(Rectangle(xy=(Theta[0][i], Theta[1][j]), width=Theta[0][i+1]-Theta[0][i], height=Theta[1][j+1]-Theta[1][j], fill=False, color='blue'))
 
     for i in cells:
         bottom_left = i.bounding_rectangle[0]
         top_right = i.bounding_rectangle[1]
         ax.add_patch(Rectangle(xy=(bottom_left[0], bottom_left[1]), width = top_right[0] - bottom_left[0], height = top_right[1] - bottom_left[1], fill=False, color='purple'))
-        ax.annotate(f'{i.mapping}',top_right)
     ax.scatter(x, y, color='red')
     i = 0
     # while i < lst.shape[0]:
@@ -766,6 +765,7 @@ def generate_qrects(min_x, min_y, max_x, max_y):
     return k
 
 def test_synthetics():
+    open("lisa_synthetic.txt", 'w')
     for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
         lst = pickle.load(open(f'synthetic_{amount}.dump', 'rb'))
         T_i = [100, 100]
@@ -793,42 +793,61 @@ def test_synthetics():
         min_x = np.min(lst[:,0])
         min_y = np.min(lst[:,1])
         max_x, max_y = np.max(lst[:,0]), np.max(lst[:,1])
-        pdb.set_trace()
-        q_rects = generate_qrects(min_x, min_y, max_x, max_y)
-        pickle.dump(q_rects, open(f"synthetic_qrects_{amount}.dump", "wb"))
+        # q_rects = generate_qrects(min_x, min_y, max_x, max_y)
+        # pickle.dump(q_rects, open(f"synthetic_qrects_{amount}.dump", "wb"))
         q_rects = pickle.load(open(f"synthetic_qrects_{amount}.dump", "rb"))
 
         total_p = 0
         count = 0
+        open("lisa_synthetic_query.txt", "w")
         for i in q_rects:
             points = decompose_query(Theta, i[0], i[1])
             return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
             final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
+            actual = [point for point in lst if in_query(point, i)]
             total_p += len(page_set)
+
+            with open("lisa_synthetic_query.txt", "a") as output:
+                output.write(f"{amount} Actual: {len(actual)}\n")
+                output.write(f"Results: {len(final_results)}\n")
+                if len(final_results) != len(actual):
+                    output.write("OOF\n")
+                output.write(f"{len(page_set)}\n")
+                output.write(f"Average page lookup {total_p/100}.\n")
+                
+
+            print(f"Actual: {len(actual)}")
             print(f"Results: {len(final_results)}")
             print(len(page_set))
             count += 1
         print(f"Average page lookup {total_p/100}.")
 
-        KNN_random_points = generate_numbers(0, 8000, 100)
-        pickle.dump(KNN_random_points, open(f"synthetic_qpoints_{amount}.dump", "wb"))
-        KNN_random_points = pickle.load(open(f"synthetic_qpoints_{amount}.dump", "rb"))
+        # KNN_random_points = generate_numbers(0, 8000, 100)
+        # # pickle.dump(KNN_random_points, open(f"synthetic_qpoints_{amount}.dump", "wb"))
+        # KNN_random_points = pickle.load(open(f"synthetic_qpoints_{amount}.dump", "rb"))
 
-        pages = 0
-        pdb.set_trace()
+        # pages = 0
 
-        for K in [1, 5, 10, 50, 100, 500]:
+        # for K in [1, 5, 10, 50, 100, 500]:
 
-            for point in KNN_random_points:
-                nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
-                pages += p
-                actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
-                actual = actual[np.argsort(actual[:,0])][:K]
-                print(actual[:,1:] == np.asarray(nearest)[:,1:])
-                print(f"Point: {point}")
-                print(f"Neighbours: {np.asarray(nearest)}")
-                print(f"Pages: {p}")
-            print(f"Average pages for {K}: {pages/100}")
+        #     for point in KNN_random_points:
+        #         nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+        #         nearest = np.asarray(nearest)
+        #         nearest = nearest[np.argsort(nearest[:, 0])]
+        #         pages += p
+        #         actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+        #         actual = actual[np.argsort(actual[:,0])][:K]
+        #         if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+        #             print(actual)
+        #             print(nearest)
+        #             raise Exception(amount, K)
+        #         # print(actual[:,1:] == np.asarray(nearest)[:,1:])
+        #         print(f"Point: {point}")
+        #         print(f"Neighbours: {np.asarray(nearest)}")
+        #         print(f"Pages: {p}")
+        #     with open("lisa_synthetic.txt", 'a') as output:
+        #         output.write(f"Average pages for {K} on synthetic points {amount}: {pages/100}.\n")
+        #     print(f"Average pages for {K}: {pages/100}")
 
     
 def test_1000():
@@ -954,6 +973,7 @@ def test_1000():
 def test_long_beach():
     lst = pickle.load(open('LB.dump', 'rb'))
     params, shards, M, T_i, psi, Theta, cells = pickle.load(open("long_beach_lisa_10bp.obj", 'rb'))
+    open("lisa_long_beach_query.txt", 'w')
 
     # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
     # T_i = [100, 100]
@@ -988,11 +1008,25 @@ def test_long_beach():
     
     total_p = 0
     count = 0
+    i = q_rects[86]
+    pdb.set_trace()
+    points = decompose_query(Theta, i[0], i[1])
+    return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
+    final_results = {tuple(point[1:] for point in return_results if in_query(point[1:], i))}
+
+    visualize(Theta, lst, T_i,params, psi, M, cells )
+
+    # TODO: FOR DEBUGGING
+    return
     for i in q_rects:
         points = decompose_query(Theta, i[0], i[1])
         return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
         final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
+        actual = [point for point in lst if in_query(point, i)]
         total_p += len(page_set)
+        with open("lisa_long_beach_query.txt", "a") as output:
+            output.write(f"{count} Results: {len(final_results)}\n")
+            output.write(f"Actual: {len(actual)}\n")
         print(f"Results: {len(final_results)}")
         print(pages)
         count += 1
@@ -1005,18 +1039,23 @@ def test_long_beach():
     # KNN_random_points = generate_numbers(min_point, max_point, 100)
     # pickle.dump(KNN_random_points, open('qpoints_LB.dump','wb'))
 
-    pages = 0
-    K = 10
-    for point in KNN_random_points:
-        nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
-        pages += p
-        actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
-        actual = actual[np.argsort(actual[:,0])][:K]
-        print(f"Point: {point}")
-        print(f"Neighbours: {np.asarray(nearest)}")
-        print(f"Actual: {actual}")
-        print(f"Pages: {p}")
-    print(f"Average pages: {pages/100}")
+    # pages = 0
+    # K = 10
+    # f = open("lisa_long_beach_results.txt", "w")
+    # f.close()
+    # for K in [1, 5, 10, 50, 100, 500]:
+    #     for point in KNN_random_points:
+    #         nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+    #         pages += p
+    #         actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+    #         actual = actual[np.argsort(actual[:,0])][:K]
+    #         print(f"Point: {point}")
+    #         print(f"Neighbours: {np.asarray(nearest)}")
+    #         print(f"Actual: {actual}")
+    #         print(f"Pages: {p}")
+    #     with open("lisa_long_beach_results.txt", "a") as out:
+    #         out.write(f"Average pages for {K}: {pages/100}.\n")
+    #     print(f"Average pages: {pages/100}")
 
     # Real query time.
     # print("TESTING")
@@ -1052,8 +1091,8 @@ def test_long_beach():
 if __name__ == "__main__":
 
     # test_1000()
-    test_synthetics()
-    # test_long_beach()
+    # test_synthetics()
+    test_long_beach()
     pdb.set_trace()
     # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
     
