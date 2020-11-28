@@ -476,7 +476,7 @@ def shard_get(index, lower, upper, shards, psi, lmap, umap):
                             # Start from here.
                             found_index = ind
                             break
-            if found_index:
+            if found_index is not None:
                 data = shard_ind.get(i).get_data()
                 start_page = int(np.floor(found_index/psi)) # Starting page
                 k.extend(data[found_index:])
@@ -520,7 +520,7 @@ def find_points(points, params, shards, M, T_i, psi, Theta):
 
     Returns a list of points found that lie within points.
     """
-    answer = set()
+    answer = []
     pages = 0
     page_set = set()
     for i in points:
@@ -528,6 +528,7 @@ def find_points(points, params, shards, M, T_i, psi, Theta):
         lower_left, top_right = i
         lower_mapping = mapping_function(lower_left, Theta, T_i)
         upper_mapping = mapping_function(top_right, Theta, T_i)
+
 
         if upper_mapping - np.floor(lower_mapping) > 1:
             upper_mapping = mapping_function_with_index(np.floor(lower_mapping), lower_left, top_right, Theta, T_i)
@@ -560,7 +561,7 @@ def find_points(points, params, shards, M, T_i, psi, Theta):
             k, p, ps = shard_get(index_lower, shard_pred_l, shard_pred_u, shards, psi, lower_mapping, upper_mapping) 
             pages += p
             page_set.update(ps)
-        answer.update([tuple(i) for i in k])
+        answer.extend([tuple(i) for i in k])
 
     return answer, pages, page_set
 
@@ -1008,21 +1009,38 @@ def test_long_beach():
     
     total_p = 0
     count = 0
-    i = q_rects[86]
-    pdb.set_trace()
-    points = decompose_query(Theta, i[0], i[1])
-    return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
-    final_results = {tuple(point[1:] for point in return_results if in_query(point[1:], i))}
+    i = q_rects[69]
+    # i = np.asarray(((9927, 485), (9950, 505)))
+    # pdb.set_trace()
+    # points = decompose_query(Theta, i[0], i[1])
+    # return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
+    # return_results = []
+    # for page in page_set:
+    #     shard_ind = shards[page[0]]
+    #     shard = shard_ind.get(page[1])
+    #     return_results.extend(shard_ind.get(page[1]).get_page(page[-1], psi))
+    # actual = [tuple(point) for point in lst if in_query(point, i)]
+    # final_results = [tuple(point[1:]) for point in return_results if in_query(point[1:], i)]
+    # for i in actual:
+    #     if i not in final_results:
+    #         print(i)
+    # for k in final_results:
+    #     if k not in actual:
+    #         print("OOF")
 
-    visualize(Theta, lst, T_i,params, psi, M, cells )
+    # visualize(Theta, lst, T_i,params, psi, M, cells )
+    # pdb.set_trace()
+    # print("YIKES")
 
-    # TODO: FOR DEBUGGING
-    return
     for i in q_rects:
         points = decompose_query(Theta, i[0], i[1])
-        return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
-        final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
-        actual = [point for point in lst if in_query(point, i)]
+        _, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
+        return_results = []
+        for page in page_set:
+            shard_ind = shards[page[0]]
+            return_results.extend(shard_ind.get(page[1]).get_page(page[-1], psi))
+        final_results = [tuple(point[1:]) for point in return_results if in_query(point[1:], i)] # Remove mapping from the points.
+        actual = [tuple(point) for point in lst if in_query(point, i)]
         total_p += len(page_set)
         with open("lisa_long_beach_query.txt", "a") as output:
             output.write(f"{count} Results: {len(final_results)}\n")
@@ -1039,23 +1057,28 @@ def test_long_beach():
     # KNN_random_points = generate_numbers(min_point, max_point, 100)
     # pickle.dump(KNN_random_points, open('qpoints_LB.dump','wb'))
 
-    # pages = 0
-    # K = 10
-    # f = open("lisa_long_beach_results.txt", "w")
-    # f.close()
-    # for K in [1, 5, 10, 50, 100, 500]:
-    #     for point in KNN_random_points:
-    #         nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
-    #         pages += p
-    #         actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
-    #         actual = actual[np.argsort(actual[:,0])][:K]
-    #         print(f"Point: {point}")
-    #         print(f"Neighbours: {np.asarray(nearest)}")
-    #         print(f"Actual: {actual}")
-    #         print(f"Pages: {p}")
-    #     with open("lisa_long_beach_results.txt", "a") as out:
-    #         out.write(f"Average pages for {K}: {pages/100}.\n")
-    #     print(f"Average pages: {pages/100}")
+    pages = 0
+    K = 10
+    f = open("lisa_long_beach_results.txt", "w")
+    f.close()
+    for K in [1, 5, 10, 50, 100, 500]:
+        for point in KNN_random_points:
+            nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+            pages += p
+            actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+            actual = actual[np.argsort(actual[:,0])][:K]
+            print(f"Point: {point}")
+            print(f"Neighbours: {np.asarray(nearest)}")
+            print(f"Actual: {actual}")
+            print(f"Pages: {p}")
+
+        with open("lisa_long_beach_results.txt", "a") as out:
+            out.write(f"Average pages for {K}: {pages/100}.\n")
+            if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+                print(actual)
+                print(nearest)
+                out.write("BIG OOF at {amount} {K}")
+        print(f"Average pages: {pages/100}")
 
     # Real query time.
     # print("TESTING")
@@ -1095,87 +1118,4 @@ if __name__ == "__main__":
     test_long_beach()
     pdb.set_trace()
     # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
-    
 
-
-    # q_rect = (np.asarray((-10,-10)), np.asarray((-5,-5)))
-    # points = decompose_query(Theta, q_rect[0], q_rect[1])
-    # pdb.set_trace()
-    # return_results, pages = find_points(points, params, shards, M, T_i, psi)
-    # final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], q_rect)} # Remove mapping from the points.
-    # print(pages)
-    # print(final_results)
-    # true_results = {tuple(point) for point in lst if in_query(point, q_rect)}
-    # print(true_results)
-
-    # points = decompose_query(Theta, np.asarray((-10, -10)), np.asarray((-5, -5)))
-    # return_results = find_points(points,params,shards,M, T_i, psi)
-    # pdb.set_trace()
-    # final_results = {point for point in return_results if in_query(point[1:], ((-10, -10), (-5, -5)))}
-    # print(final_results)
-
-    # points = decompose_query(Theta, np.asarray((2000, 2000)), np.asarray((2010, 2010)))
-    # return_results = find_points(points,params,shards,M, T_i, psi)
-    # final_results = {point for point in return_results if in_query(point[1:], ((2000, 2000), (2010, 2010)))}
-    # print(final_results)
-
-    # points = decompose_query(Theta, np.asarray((-50, 50)), np.asarray((20, 70)))
-    # return_results = find_points(points,params,shards,M, T_i, psi)
-    # final_results = {point for point in return_results if in_query(point[1:], ((-50, 50), (20, 70)))}
-    # print(final_results)
-
-
-    # KNN TESTING!
-    # num_rand_points = 10
-
-
-    # KNN_random_points = generate_numbers(0,100, 10) # Grab randomly, 10 elements.
-    # average_dist = 0
-    # average_pages = 0
-    # K = 3
-    # print("TRAINING")
-    # for p in KNN_random_points:
-    #     delta = 1
-    #     pages = 0
-    #     while(True):
-    #         ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi) # KNN with 3 neighbours.
-    #         print(pages)
-    #         pages += k_pages
-    #         if ans.shape[0] < K:
-    #             delta += 1
-    #         else:
-    #             max_dist = np.max(ans[:,0])
-    #             average_pages += pages
-    #             average_dist += max_dist
-    #             print(f"Point {p}")
-    #             print(f'Neighbours {ans}\nPages: {pages}')
-    #             break
-    # average_dist = average_dist/10
-    # average_pages = average_pages/10
-    # 
-    # print(average_dist)
-    # average_pages = 0
-
-    # # Real query time.
-    # print("TESTING")
-    # KNN_random_points = pickle.load(open('qpoints_10.dump', 'rb'))
-    # pdb.set_trace()
-    # delta = average_dist
-    # for p in KNN_random_points:
-    #     delta = average_dist
-    #     pages = 0
-    #     while True:
-    #         ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi)
-    #         if ans.shape[0] < K:
-    #             mult_factor = 2
-    #             if ans.shape[0] > 0:
-    #                 mult_factor = math.sqrt(K/ans.shape[0])
-    #             delta = delta * mult_factor
-    #         else:
-    #             average_pages += k_pages
-
-    #             print(f"Point {p}")
-    #             print(f'Neighbours {ans}\nPages: {pages}')
-    #             break
-    # print(average_pages/10)
-    
