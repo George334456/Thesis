@@ -44,9 +44,9 @@ class Shard_index:
             self.shards[i].calculate()
 
 class Rectangle:
-    def __init__(self, identification, bounding_rectangle):
+    def __init__(self, identification, bounding_rect):
         self.identification = identification
-        self.rectangle = bounding_rectangle
+        self.rectangle = np.asarray(bounding_rect)
         self.lower_mapping = None
         self.upper_mapping = None
 
@@ -113,10 +113,10 @@ class Cell:
         """
         Creates a cell with the mapping range it contains. More specifically, this describes the cell with all mappingings [min_map, min_map + 1)
 
-        Creates a bounding_rectangle around it.
+        Creates a bounding_rectangle around it. This bounding rectangle is a [dimension x 2] array
         """
         self.mapping = min_map
-        self.bounding_rectangle = bounding_rectangle
+        self.bounding_rectangle = np.asarray(bounding_rectangle)
         self.shards = set()
     
     def add_shard(self, shard):

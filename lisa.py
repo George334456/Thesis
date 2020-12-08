@@ -16,6 +16,7 @@ k = Number of partitions for the mapped values. Essentially equivalent to how ma
 sigma = Set of breakpoints for beta
 V = Number of points in a particular partition.
 psi = estimated number of keys in a shard. Approximately equal to how many keys can fit into a page.
+M = the partition list of mapped values that is used to train each individual F_i
 """
 def check_alpha(alpha):
     """
@@ -34,12 +35,30 @@ def calculate_loss(A, alpha, y):
     """
     return np.sum(np.apply_along_axis(lambda x: x * x, 1, (A @ alpha) - y))
 
-def next_batch(partition, y, batchsize = 32):
+def dfs(list_of_list, max_depth, depth):
     """
-    Batch our partition and y into sizes of batchsize
+    Grabs tuples from list_of_list starting at depth and going until the last depth.
+
+    Return all possible combinations of the tuples along each dimension axis.
+
+    This is a depth first traversal of list of lists.
+
+    list_of_list is a list of lists. len(list_of_list) == dimension. Each individual list can contain variable length, but the list will always be a list of tuples.
+    We want to grab all possible tuples that take one tuple from each dimension
+    max_depth is the maximum depth of the list of lists. Note that max_depth == dimension - 1
+    depth is the current depth of the list of list visit.
     """
-    for i in np.arange(0, partition.shape[0], batchsize):
-        yield (partition[i:i+batchsize], y[i:i+batchsize])
+    full_tuples = []
+    if depth == max_depth:
+        for i in list_of_list[depth]:
+            full_tuples.append([i])
+        return full_tuples
+    for i in list_of_list[depth]:
+        combinations = dfs(list_of_list, max_depth, depth + 1)
+        for j in combinations:
+            j.insert(0, i)
+            full_tuples.append(j)
+    return full_tuples
 
 def train(partitions, sigma, psi):
     """
@@ -169,16 +188,18 @@ def calculate_alpha(partition, beta, y):
 
 def find_interval(point, Theta, T_i):
     """
-    point is a 1 x 2 array.
-    Return the interval that we found the point in.
+    point is a 1 x dimension array.
+    Return the interval that we found the point in. IE a dimension x 2 array.
 
-    Will be of form ((x_0, x_1), (y_0, y_1))
+    Will be of form ((x_0, x_1), (y_0, y_1), (z_0, z_1) ...) for all dimension in dimension.
     """
-    # print(Theta, point)
-    x = binary_search(point[0], Theta[0], 0, T_i[0] - 1)
-    y = binary_search(point[1], Theta[1], 0, T_i[1] - 1)
+    dimension = Theta.shape[0]
+    lst = []
+    for i in range(dimension):
+        p = binary_search(point[i], Theta[i], 0, T_i[i] - 1)
+        lst.append(p)
 
-    return (x,y)
+    return tuple(lst)
 
 def binary_search(element, array, beginning, end):
     """
@@ -197,12 +218,13 @@ def binary_search(element, array, beginning, end):
         else:
             return binary_search(element, array, beginning, mid)
 
+# TODO: Change
 def mapping_list_partition(lst, Theta, T_i, k):
     """
     Returns a k x F, where F is approximately len(lst)/k equal partition of the list of points.
     Also returns the original point list with an attached mapping to them, sorted by mapping.
 
-    lst is a N x 2 list of points.
+    lst is a N x dimension list of points.
     Theta are the border points.
     T_i are the size of the border points.
     """
@@ -216,44 +238,63 @@ def mapping_list_partition(lst, Theta, T_i, k):
     
     return parts, parts_with_mapping
         
-
 def cell_index(point, Theta, T_i):
     """
+    point is a 1x dimension length array.
+    Theta is a dimension x max(T_i) length array.
+    T_i is a 1 x dimension length array.
     Calculates the cell index based on the given point and Theta.
     """
-    x,y = find_interval(point, Theta, T_i)
-    x_ind = np.where(Theta[0] == x[0])[0][0]
-    y_ind = np.where(Theta[1] == y[0])[0][0]
+    dimension = Theta.shape[0]
+    interval = find_interval(point, Theta, T_i)
+    inds = [np.where(Theta[i] == e[0])[0][0] for i, e in enumerate(interval)]
+    count = inds[0]
+    for i in range(1, dimension):
+        count = count * T_i[i] + inds[i]
 
-    return x_ind * T_i[1] + y_ind
+    return count
 
 def mapping_function_with_index(ind, point_lower, point, Theta, T_i):
-    x, y = find_interval(point_lower, Theta, T_i)
-
-    C_i = (y[1] - y[0]) * (x[1] - x[0])
-    H_i = (point[0] - x[0]) * (point[1] - y[0])
-    # print("area cell {} point {}".format(C_i, H_i))
-    # cell_index = np.where(Theta[0] == x[0]) * T_i[0] + np.where(Theta[1] == y[0])
+    """
+    ind is an integer
+    Point_lower is a 1x dimension array
+    point is a 1 x dimension array.
+    Theta is a dimension x 2 array
+    T_i is a 1 x dimension array
+    Returns the value of the mapping function on point, but takes in the Lebesgue measure between point_lower and point and adds the given index. 
+    """
+    dimension = Theta.shape[0]
+    interval = find_interval(point_lower, Theta, T_i)
+    C_i = 1
+    H_i = 1
+    for i,e in enumerate(interval):
+        C_i *= e[1] - e[0]
+        H_i *= point[i] - e[0]
     return ind + (H_i/C_i)
 
 def mapping_function(point, Theta, T_i):
     """
-    Point is a 1 x 2 array.
+    Point is a 1 x dimension array.
+    Theta is a dimension x 2 array
+    T_i is a 1 x dimension array
     Returns the value of the mapping function on point, Theta, T_i
     """
-    x,y = find_interval(point, Theta, T_i)
+    interval = find_interval(point, Theta, T_i)
     ind = cell_index(point, Theta, T_i)
+    C_i = 1
+    H_i = 1
+    for i,e in enumerate(interval):
+        C_i *= e[1] - e[0]
+        H_i *= point[i] - e[0]
 
-    C_i = (y[1] - y[0]) * (x[1] - x[0])
-    H_i = (point[0] - x[0]) * (point[1] - y[0])
-    # print("area cell {} point {}".format(C_i, H_i))
-    # cell_index = np.where(Theta[0] == x[0]) * T_i[0] + np.where(Theta[1] == y[0])
     return ind + (H_i/C_i)
 
 def calculate_border_points(axis, T_i, maximum):
     """
     data is a 1 x N of sorted data along an axis.
+    maximum is the maximum number of entries along any axis. Maximum >= T_i
     Return a 1 x T_i + 1 array of calculated values along the border point.
+    
     Note that the last border point extends out to infinity IE [arr[T_i], max]. Technically this should be infinite.
     We should not really take into account maximum in calculating cell membership.
     """
@@ -266,31 +307,30 @@ def calculate_border_points(axis, T_i, maximum):
     
     return res
 
-
 def create_cells(data, T_i):
     """
     T_i is a N-d array, where T_i[j] is the partition amount for dimension j.
-    data is a N x 2 matrix. IE it contains N points in 2d.
+    data is a N x dimension matrix. IE it contains N points in dimension d.
 
     return a Theta that represents all the cells. Consists of:
-    Theta[0] = border points for x
-    Theta[1] = border points for y
+    Theta[0] = border points for x (1 x maximum + 1) tuple
+    Theta[1] = border points for y (1 x maximum + 1) tuple
+    ...
+    Theta[dimension] = border points for dimension <dimension> (1 x maximum + 1) tuple
+
     """
-    
-    X = np.take(data, 0, 1)
-    Y = np.take(data, 1, 1)
-    T_ix = T_i[0]
-    T_iy = T_i[1]
-    maximum = max(T_ix,T_iy)
-    
-    sort_X = np.sort(X)
-    sort_Y = np.sort(Y)
+    dimension = data.shape[1]
+    maximum = np.max(T_i)
+    res = np.zeros((dimension, maximum + 1))
 
-    theta_x = calculate_border_points(sort_X, T_ix, maximum)
-    theta_y = calculate_border_points(sort_Y, T_iy, maximum)
+    for i in range(dimension):
+        axis = data[:, i]
+        axis = np.sort(axis)
+        res[i] = calculate_border_points(axis, T_i[i], maximum)
 
-    return np.vstack((theta_x, theta_y))
+    return res
 
+# TODO: Change
 def create_shards(params, full_lst, psi, cells=None):
     """
     Create the shards based on the params.
@@ -359,38 +399,48 @@ def create_shards_original(params, full_lst, psi):
 
     return shards
 
+# TODO: Change
+
 def decompose_query(Theta, bottom_left, top_right):
     """
     Takes a query rectangle and we decompose it into cells that intersect with the cells.
 
-    bottom_left: 1x2 numpy array representing the bottom left vertex
-    top_right: 1x2 numpy array representing the top right vertex.
+    bottom_left: 1xdimension numpy array representing the bottom left vertex
+    top_right: 1xdimension numpy array representing the top right vertex.
     Theta: The breakpoints for all the axis.
 
     Returns a list of points that overlap with Theta.
     """
-    x_1, y_1 = bottom_left.flatten()
-    x_2, y_2 = top_right.flatten()
-    lst_x = [x_1] if x_1 > Theta[0][0] else [Theta[0][0]]
-    lst_y = [y_1] if y_1 > Theta[1][0] else [Theta[1][0]]
-    for i in Theta[0]: # Dimension x
-        if x_1 < i < x_2:
-            lst_x.append(i)
-    for i in Theta[1]: # Dimension y
-        if y_1 < i < y_2:
-            lst_y.append(i)
-    lst_x.append(x_2)
-    lst_y.append(y_2)
-    points_x = []
-    points_y = []
-    for i in range(len(lst_x) - 1):
-        points_x.append(( lst_x[i], lst_x[i+1]))
+    dimension = Theta.shape[0]
+    list_of_points = []
+    for i in range(dimension):
+        points = []
+        # Get the mins and maxs for each dimension
+        mins = bottom_left.flatten()
+        maxs = top_right.flatten()
+        lst = [mins[i]] if mins[i] > Theta[i][0] else [Theta[i][0]]
 
-    for i in range(len(lst_y) - 1):
-        points_y.append((lst_y[i], lst_y[i+1]))
+        # Iterate over the dimension
+        for j in Theta[i]:
+            if mins[i] < j < maxs[i]:
+                lst.append(j)
 
-    full_points = [tuple(zip(a,b)) for a in points_x for b in points_y]
-    return full_points
+        # Create the points of overlap on dimension i along Theta[i]'s breakpoints
+        lst.append(maxs[i])
+        
+        for j in range(len(lst) - 1):
+            points.append((lst[j], lst[j + 1]))
+        list_of_points.append(points)
+
+    full_points = dfs(list_of_points, dimension - 1, 0)
+    # Consider list(map(lambda x : list(zip(*x)), list(zip(*list_of_points)))
+    # Essentially you're trying to take from columns instead of creating pairwise things.
+    # full_points = list(zip(list_of_points))
+    result = [tuple(zip(*i)) for i in full_points]
+
+    return result
+
+    # full_points = list(map(lambda x : tuple(zip(*x)), list(zip(*full_points))))
 
 def shard_prediction(mapping, index, params, psi):
     """
@@ -508,6 +558,7 @@ def shard_get(index, lower, upper, shards, psi, lmap, umap):
                     k.extend(data[start:end + 1])
     return k, pages, page_set
 
+# TODO: Change
 def find_points(points, params, shards, M, T_i, psi, Theta):
     """
     points is a list of tuples. These tuples are of form (bottom_left, top_right), where both bottom_left and top_right are 1x2 np arrays.
@@ -590,12 +641,17 @@ def visualize(Theta, lst, T_i, params, psi, M, cells):
     plt.show()
 
 def in_query(point, q_rectangle):
+    """
+    Determine if point belongs in q_rectangle.
+    """
     low, up = q_rectangle
-    x_l, y_l = low
-    x_u, y_u = up
-
-    x_p, y_p = point
-    return x_l <= x_p <= x_u and y_l <= y_p <= y_u
+    dimension = len(point)
+    for i in range(dimension):
+        if low[i] <= point[i] <= up[i]:
+            continue
+        else:
+            return False
+    return True
 
 def sort_branches(branches, min_dist_ordering=False):
     """
@@ -622,8 +678,9 @@ def find_nearest(results, point, nearest, k):
     point: The point to look for closest to
     nearest: The current array of closest points.
     """
+    dimension = len(point)
     for i in results:
-        dist = distance(i[1:], point) ** 2 # Use squared distance to keep in accordance.
+        dist = distance(i[1:], point) 
         dist_entry = np.insert(i[1:], 0, dist)
         if len(nearest) < k:
             nearest.append(dist_entry)
@@ -632,12 +689,18 @@ def find_nearest(results, point, nearest, k):
             max_dist = np.max(np.take(nearest, 0, 1))
             if dist < max_dist:
                 nearest = np.asarray(nearest)
-                nearest = np.concatenate((nearest, dist_entry.reshape(1,3)), 0)
+                nearest = np.concatenate((nearest, dist_entry.reshape(1,dimension + 1)), 0)
                 nearest = nearest[np.argsort(nearest[:,0])][:k] # Take the closest k elements
             nearest = list(nearest)
     return nearest
 
+# TODO: Change
 def KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells):
+    """
+    Finds the K nearest neighbours to a given point.
+
+    Uses the MINDIST/MINMAXDIST ordering to prune the search set.
+    """
     # Generate cells to visit by mindist/minmaxdist.
     nearest = []
     pages = 0
@@ -740,29 +803,40 @@ def KNN(k, delta, point, Theta, params, shards, M, T_i, psi):
 
 def distance(point1, point2):
     """
-    Calculates the distance between two points
+    Calculates the square distance between two points
 
-    point1 is a 1x2 array.
-    point2 is a 1x2 array.
+    point1 is a 1x dimension array.
+    point2 is a 1x dimension array.
     """
-    x_1, y_1 = point1
-    x_2, y_2 = point2
-    return math.sqrt((x_1 - x_2)**2 + (y_1 - y_2)**2)
+    dimension = len(point1)
+    total = 0
+    for i in range(dimension):
+        total += (point1[i] - point2[i])**2
 
-def generate_qrects(min_x, min_y, max_x, max_y):
-    lst = generate_numbers(min(min_x, min_y), max(max_x, max_y), 100)
-    max_length_x = 0.25*(max_x - min_x)
-    max_length_y = 0.25*(max_y - min_y)
+    return total
+
+def generate_qrects(mins, maxs):
+    """
+    Generate query rectangles based on mins and maxs
+
+    mins is a [1x dimension array] where mins[i] == minimum value on dimension i
+    maxs is a [1 x dimension array] where maxs[i] == maximum value on dimension i
+    """
+    dimension = len(mins)
+    lst = generate_numbers(np.min(mins), np.max(maxs), 100, dimension)
+    # Calculate the max lengths along each dimension
+    max_lengths = []
+    for i in range(dimension):
+        max_lengths.append(0.25 * (maxs[i] - mins[i]))
     rng = np.random.default_rng()
-    len_x = rng.uniform(0, max_length_x)
-    len_y = rng.uniform(0, max_length_y)
 
     k = []
     for i in lst:
-        x = i[0]
-        y = i[1]
-
-        k.append((np.asarray(((x,y))),np.asarray((x + len_x, y+len_y))))
+        curr_tuple = []
+        for j in range(dimension):
+            length = rng.uniform(0, max_lengths[j])
+            curr_tuple.append(i[j] + length)
+        k.append((np.asarray(i), np.asarray(curr_tuple)))
     return k
 
 def test_synthetics():
@@ -825,30 +899,166 @@ def test_synthetics():
 
         # KNN_random_points = generate_numbers(0, 8000, 100)
         # # pickle.dump(KNN_random_points, open(f"synthetic_qpoints_{amount}.dump", "wb"))
-        # KNN_random_points = pickle.load(open(f"synthetic_qpoints_{amount}.dump", "rb"))
+        KNN_random_points = pickle.load(open(f"synthetic_qpoints_{amount}.dump", "rb"))
 
-        # pages = 0
+        for K in [1, 5, 10, 50, 100, 500]:
+            pages = 0
+            print(f'K: {pages}')
+            for point in KNN_random_points:
+                nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+                nearest = np.asarray(nearest)
+                nearest = nearest[np.argsort(nearest[:, 0])]
+                pages += p
+                actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+                actual = actual[np.argsort(actual[:,0])][:K]
+                if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+                    print(actual)
+                    print(nearest)
+                    raise Exception(amount, K)
+                # print(actual[:,1:] == np.asarray(nearest)[:,1:])
+                print(f"Point: {point}")
+                print(f"Neighbours: {np.asarray(nearest)}")
+                print(f"Pages: {p}")
+            with open("lisa_synthetic.txt", 'a') as output:
+                output.write(f"Average pages for {K} on synthetic points {amount}: {pages/100}.\n")
+            print(f"Average pages for {K}: {pages/100}")
 
-        # for K in [1, 5, 10, 50, 100, 500]:
+def test_nd():
+    open('lisa_synthetic_nd.txt', 'w')
+    values = {3: [10, 10, 10], 4:[ 8, 8, 8, 8], 5: [7, 7, 7, 7, 7], 6: [6, 6, 6, 6, 6, 6]}
+    for dimension in [3, 4, 5, 6]:
+        for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
+            T_i = values[dimension]
+            Theta = create_cells(lst, T_i)
+            partitions, full_lst = mapping_list_partitions(lst, Theta, T_i, 10)
 
-        #     for point in KNN_random_points:
-        #         nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
-        #         nearest = np.asarray(nearest)
-        #         nearest = nearest[np.argsort(nearest[:, 0])]
-        #         pages += p
-        #         actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
-        #         actual = actual[np.argsort(actual[:,0])][:K]
-        #         if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
-        #             print(actual)
-        #             print(nearest)
-        #             raise Exception(amount, K)
-        #         # print(actual[:,1:] == np.asarray(nearest)[:,1:])
-        #         print(f"Point: {point}")
-        #         print(f"Neighbours: {np.asarray(nearest)}")
-        #         print(f"Pages: {p}")
-        #     with open("lisa_synthetic.txt", 'a') as output:
-        #         output.write(f"Average pages for {K} on synthetic points {amount}: {pages/100}.\n")
-        #     print(f"Average pages for {K}: {pages/100}")
+            M = [partitions[0][0]]
+            for i in partitions:
+                M.append(i.max())
+            psi = 50
+            params = train(partitions, 3, psi)
+
+            bounding_rectangles = decompose_query(Theta, Theta[:, 0], Theta[:, -1])
+            cells = []
+            for i in range(len(bounding_rectangles)):
+                cells.append(Cell(i, bounding_rectangles[i]))
+            pdb.set_trace()
+
+            shards = create_shards(params, full_lst, psi, cells)
+            mins = []
+            maxs = []
+            for i in range(dimension):
+                mins.append(np.min(lst[:,i]))
+                maxs.append(np.max(lst[:,i]))
+
+            q_points = pickle.load(f'synthetic_qpoints_{dimension}d.dump', 'rb')
+
+            for K in [1, 5, 10, 50, 100, 500]:
+                pages = 0
+                for point in KNN_random_points:
+                    nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+                    nearest = np.asarray(nearest)
+                    nearest = nearest[np.argsort(nearest[:, 0])]
+                    pages += p
+                    actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+                    actual = actual[np.argsort(actual[:,0])][:K]
+                    if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+                        print(actual)
+                        print(nearest)
+                        raise Exception(amount, K)
+                    print(f"Point: {point}")
+                    print(f"Neighbours: {np.asarray(nearest)}")
+                    print(f"Pages: {p}")
+                with open("lisa_synthetic_nd.txt", 'a') as output:
+                    output.write(f"Average pages for {K} on synthetic points {amount} for dimension {dimension}D: {pages/100}.\n")
+                print(f"Average pages for {K}: {pages/100}")
+                
+
+
+def test_3d():
+    # Generate a 100 3d points.
+    # lst = generate_numbers(0, 100, 100, 3)
+    # pickle.dump(lst, open("3d_lisa.dump", "wb"))
+    lst = pickle.load(open('3d_lisa.dump', 'rb'))
+    dimension = 3
+    T_i = [4, 4, 4]
+    Theta = create_cells(lst, T_i)
+
+    partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 3)
+
+    M = [partitions[0][0]]
+    for i in partitions:
+        M.append(i.max())
+
+    psi = 50
+    params = train(partitions, 3, psi)
+    
+    # Get the bounding rectangles.
+    # Send in all the minimum values of all Thetas, and the maximum values of all Thetas as bottom_left and top_right respectively
+    bounding_rectangles = decompose_query(Theta, Theta[:, 0], Theta[:, -1])
+    cells = []
+    for i in range(len(bounding_rectangles)):
+        cells.append(Cell(i, bounding_rectangles[i]))
+    pdb.set_trace()
+
+    # Create shards to store the data.   
+    shards = create_shards(params, full_lst, psi, cells)
+    mins = []
+    maxs = []
+    for i in range(dimension):
+        mins.append(np.min(lst[:,i]))
+        maxs.append(np.max(lst[:,i]))
+
+    q_rects = pickle.load(open('3d_lisa_qrects.dump', 'rb'))
+
+
+    total_p = 0
+    count = 0
+    # i = q_rects[8]
+    # pdb.set_trace()
+    # points = decompose_query(Theta, i[0], i[1])
+    # _, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
+    # return_results = []
+    # for page in page_set:
+    #     shard_ind = shards[page[0]]
+    #     return_results.extend(shard_ind.get(page[1]).get_page(page[-1], psi))
+    # final_results = [tuple(point[1:]) for point in return_results if in_query(point[1:], i)]
+    # actual = [tuple(point) for point in lst if in_query(point, i)]
+    # return
+    for i in q_rects:
+        print(f'current query {count}')
+        points = decompose_query(Theta, i[0], i[1])
+        _, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
+        return_results = []
+        for page in page_set:
+            shard_ind = shards[page[0]]
+            return_results.extend(shard_ind.get(page[1]).get_page(page[-1], psi))
+        final_results = [tuple(point[1:]) for point in return_results if in_query(point[1:], i)] # Remove mapping from the points.
+        actual = [tuple(point) for point in lst if in_query(point, i)]
+        if len(actual) != len(final_results):
+            print(f"Actual: {actual}\nRealized: {final_results}")
+        total_p += len(page_set)
+        print(f"Results: {len(final_results)}")
+        print(len(page_set))
+        count += 1
+    print(f"Average page lookup {total_p/100}.")
+    print("Nice")
+
+    K = 10
+    pages = 0
+    q_points = generate_numbers(0, 100, 100, 3)
+    for point in q_points:
+        nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+        pages += p
+        print(f'Pages {p}\nNeighbours: {nearest}')
+        actual = np.asarray([np.asarray((distance(point, i), *i)) for i in lst])
+        actual = actual[np.argsort(actual[:,0])][:K]
+        if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+            print(actual)
+            print(nearest)
+            raise Exception(amount, K)
+    print(f"Average Pages: {pages/100}")
+
 
     
 def test_1000():
@@ -1057,11 +1267,10 @@ def test_long_beach():
     # KNN_random_points = generate_numbers(min_point, max_point, 100)
     # pickle.dump(KNN_random_points, open('qpoints_LB.dump','wb'))
 
-    pages = 0
-    K = 10
     f = open("lisa_long_beach_results.txt", "w")
     f.close()
     for K in [1, 5, 10, 50, 100, 500]:
+        pages = 0
         for point in KNN_random_points:
             nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
             pages += p
@@ -1114,8 +1323,9 @@ def test_long_beach():
 if __name__ == "__main__":
 
     # test_1000()
-    # test_synthetics()
-    test_long_beach()
-    pdb.set_trace()
+    test_synthetics()
+    # test_3d()
+    # test_long_beach()
+    # pdb.set_trace()
     # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
 

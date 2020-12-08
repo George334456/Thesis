@@ -2,22 +2,31 @@ from typing import Tuple, List, Optional
 import numpy as np
 from data_generation import cluster, generate_numbers
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from matplotlib.collections import PolyCollection
 from matplotlib.patches import Rectangle
 import pdb
+import math
 import pickle
+import operator
+from functools import reduce
 
 M =50 # Arbitrarily set M.
 # M = 2
-def distance(point1, point2):
+def distance(point1, point2, dimension):
     """
     Calculate the distance between 2 points
-    point1: 1x2 array representing first point
-    point2: 1x2 array representing second point
-    """
-    p1_x, p1_y = point1
-    p2_x, p2_y = point2
+    point1: 1xdimension array representing first point
+    point2: 1xdimension array representing second point
 
-    return (p1_x - p2_x)**2 + (p1_y - p2_y)**2
+    Returns the square distance between the two.
+    """
+    answer = 0
+    for i in range(dimension):
+        answer += (point1[i]-point2[i]) ** 2
+    
+    return answer
 
 
 def prune(branches, nearest, k):
@@ -49,35 +58,40 @@ def prune(branches, nearest, k):
 
 def bounding_rectangle(points):
     """
-    Points is a np array of N points of 2 elements. In other words, this is a (N, 2) np array.
-    Returns the bounding rectangle that closely encloses all points in points. This is in format [(lower_left_x, lower_left_y), (top_right_x, top_right_y)]
+    Points is a np array of N points of dimension elements. In other words, this is a (N, dimension) np array.
+
+    Returns the bounding box that encloses all points in points. This is in format [(lower_left_0, ..., lower_left_(dimension - 1)), (top_right_0, ..., top_right_(dimension-1))]
     """
-    X = np.take(points, 0, 1)
-    Y = np.take(points, 1, 1)
-    max_x = np.amax(X)
-    max_y = np.amax(Y)
-    min_x = np.amin(X)
-    min_y = np.amin(Y)
-    return np.array([(min_x, min_y), (max_x, max_y)])
+    points = np.asarray(points)
+    dimension = points.shape[1]
+    answer = np.zeros((2, dimension))
+    for i in range(dimension):
+        curr = np.take(points, i, 1)
+        answer[0][i] = np.amin(curr)
+        answer[1][i] = np.amax(curr)
+
+    return answer
 
 def min_max_dist(point, rectangle):
     """
-    point is a 1x2 np array. Represents a point
-    rectangle is a 2x2 np array. Represents the bottom-left and top-right corners respectively
+    point is a 1x dimension np array. Represents a point
+    rectangle is a 2x dimension np array. Represents the bottom-left and top-right corners respectively
 
     Returns the "MINMAXDIST" as required by the paper.
     """
+
     rect_points = np.stack((np.take(rectangle, 0, 1), np.take(rectangle, 1, 1)))
 
+    dimension = rectangle.shape[1]
     S = 0
-    for i in range(2):
-        interval = rect_points[i]
+    for i in range(dimension):
+        interval = rectangle[0][i], rectangle[1][i]
         rM = interval[0] if point[i] >= (interval[0] + interval[1])/2 else interval[1]
         S += (point[i] - rM) ** 2
-
+    
     minimum = float('inf')
-    for i in range(2):
-        interval = rect_points[i]
+    for i in range(dimension):
+        interval = rectangle[0][i], rectangle[1][i]
         rM = interval[0] if point[i] >= (interval[0] + interval[1])/2 else interval[1]
         rm = interval[1] if point[i] >= (interval[0] + interval[1])/2 else interval[0]
         minimum = min(minimum, S - (point[i] - rM) ** 2 + (point[i] - rm) ** 2)
@@ -85,32 +99,33 @@ def min_max_dist(point, rectangle):
 
 def min_dist(point, rectangle):
     """
-    point is a 1x2 np array. Represents a point
-    rectangle is a 2x2 np array. Represents the bottom-left and top-right corners respectively
+    point is a 1xdimension np array. Represents a point
+    rectangle is a 2xdimension np array. Represents the bottom-left and top-right corners respectively
 
     Returns the "minimum_distance" as required by the paper.
     """
-    rect_points = np.stack((np.take(rectangle, 0, 1), np.take(rectangle, 1, 1)))
-
+    dimension = rectangle.shape[1]
     count = 0
-    
-    for i in range(2):
-        interval = rect_points[i]
+
+    for i in range(dimension):
+        mini = rectangle[0][i]
+        maxi = rectangle[1][i]
         r = 0
-        if point[i] < interval[0]:
-            r = interval[0]
-        elif point[i] > interval[1]:
-            r = interval[1]
+        if point[i] < mini:
+            r = mini
+        elif point[i] > maxi:
+            r = maxi
         else:
             r = point[i]
-        count += (point[i] - r)**2
+        count += (point[i] - r) ** 2
+
     return count
 
-def adjust_rectangle(node):
+def adjust_rectangle(node, dimension):
     """
     Given an RTree_node, return the bounding rectangle that contains all its children rectangles.
     """
-    rectangles = np.empty([1,2])
+    rectangles = np.empty([1,dimension])
     for i in node.children:
         rectangles = np.concatenate((rectangles, i.rectangle))
     
@@ -121,16 +136,29 @@ def overlap(point, rect):
     """
     Find if point overlaps rectangle rect.
 
-    point is a 1x2 array representing a point.
-    rect is a 2x2 array representing first the bottom left corner, then the top right corner.
+    point is a 1xdimension array representing a point.
+    rect is a 2xdimension array representing first the minimum of all points (bottom_left corner equivalent in 2d) and the maximum of all points (top_right corner equivalent in 2d)
     """
-    bottom_left, top_right = rect
-    p_x, p_y = point
+    dimension = rect.shape[1]
+    for i in range(dimension):
+        k = rect[0][i] <= point[i] <= rect[1][i]
+        if not k:
+            return False
+    return True
 
-    min_x, min_y = bottom_left
-    max_x, max_y = top_right
-    
-    return min_x <= p_x <= max_x and min_y <= p_y <= max_y
+def overlap_1d(line1, line2):
+    """
+    Checks if two lines overlap.
+
+    line1: 1x2 array representing the beginning and end of a line
+    line2: 1x2 array representing the beginning and end of a line
+
+    Returns if the two of them overlap
+    """
+    min1, max1 = line1
+    min2, max2 = line2
+
+    return min1 <= min2 <= max1 or min1 <= max2 <= max1 or min2 <= max1 <= max2 or min2 <= min1 <= max2
 
 def overlap_rectangles(rect1, rect2):
     """
@@ -138,20 +166,18 @@ def overlap_rectangles(rect1, rect2):
 
     rect1 and rect2 are 2 x 2 arrays.
     """
-    # https://stackoverflow.com/questions/40795709/checking-whether-two-rectangles-overlap-in-python-using-two-bottom-left-corners
-    # return not (self.top_right.x < other.bottom_left.x or 
-    #         self.bottom_left.x > other.top_right.x or 
-    #         self.top_right.y < other.bottom_left.y or 
-    #         self.bottom_left.y > other.top_right.y)    
+    # https://stackoverflow.com/questions/20925818/algorithm-to-check-if-two-boxes-overlap
+    # TODO: FOR HIGHER DIMENSIONS
+    mins1, maxs1 = rect1
+    mins2, maxs2 = rect2
 
-    bottom_left1 = rect1[0]
-    top_right1 = rect1[1]
-
-    bottom_left2 = rect2[0]
-    top_right2 = rect2[1]
-
-    return not (top_right1[0] < bottom_left2[0] or bottom_left1[0] > top_right2[0] or top_right1[1] < bottom_left2[1] or bottom_left1[1] > top_right2[1])
-    
+    dimension = rect1.shape[1]
+    is_overlap = False
+    for i in range(dimension):
+        is_overlap = overlap_1d(rect1[:, i], rect2[:, i])
+        if not is_overlap:
+            return False
+    return True
 
 class RTree_node:
     """
@@ -232,11 +258,13 @@ class RTree_node:
             # Use this mapping to construct a children list to update.
             for i, e in enumerate(self.children):
                 rect = e.rectangle
-                min_x = rect[0][0]
-                min_y = rect[0][1]
-                max_x = rect[1][0]
-                max_y = rect[1][1]
-                centroid = ((max_x + min_x)/2, (max_y + min_y)/2)
+                dimension = rect.shape[1]
+                centroid = []
+                for j in range(dimension):
+                    curr_min = rect[0][j]
+                    curr_max = rect[1][j]
+                    centroid.append((curr_max + curr_min)/2)
+                centroid = tuple(centroid)
                 lst.append(centroid)
                 mapping[centroid] = i
 
@@ -253,9 +281,9 @@ class RTree_node:
     
     def search(self, rectangle):
         """
-        Search for all points within rectangle
+        Search for all points within a query rectangle
         
-        Returns a list of all points found within rectangle.
+        Returns a list of all points found within the query box.
         """
         # Start at root
         ans = []
@@ -301,22 +329,25 @@ class RTree_node:
 
     def KNN(self, point, nearest, k):
         """
-        point: 1x2 array representing the point
+        point: 1x dimension array representing the point
         nearest: List representing the nearest k positions so far.
         k: The number of nearest neighbours to find.
         """
+        dimension = len(point)
         pages = 0
         if self.children == []:
             # We are a leaf
             for i in self.data_points:
-                dist = distance(i, point)
+                dist = distance(i, point, dimension)
                 dist_entry = np.insert(i, 0, dist)
+
+                # dist_entry is supposed to be of form [distance, point 0, point 1, ... point n]
                 if len(nearest) < k:
                     nearest.append(dist_entry)
                 else:
                     # Sort the objects found in the children.
                     nearest = np.asarray(nearest)
-                    nearest = np.concatenate((nearest,dist_entry.reshape(1,3)), 0)
+                    nearest = np.concatenate((nearest,dist_entry.reshape(1,dimension + 1)), 0)
                     nearest = nearest[np.argsort(nearest[:,0])][:k]
                     nearest = list(nearest)
             pages += 1
@@ -332,7 +363,7 @@ class RTree_node:
             branches = prune(branches, nearest, k)
 
             while len(branches) > 0:
-                child = branches.pop(0)[2]
+                child = branches.pop(0)[-1]
                 nearest, p = child.KNN(point, nearest, k)
                 pages += p
                 branches = prune(branches, nearest, k)
@@ -344,13 +375,14 @@ class RTree:
     """
     Implementation of an R-Tree. It only stores the root.
     """
-    def __init__(self):
+    def __init__(self, dimension):
         """
         Initialize a root node with no bounding rectangle, no children, no parent, and no data points.
         """
         RTree_node.ID = 0
         self.root = RTree_node([], [], None, [])
         self.data = []
+        self.dimension = dimension
 
 
     def adjust_tree(self, n1, n2):
@@ -370,12 +402,17 @@ class RTree:
                 p1, p2 = p1.insert_to_node(n2)
             # Adjust the bounding rectangle on parent, by looking at the children
             if p2:
-                p2.rectangle = adjust_rectangle(p2)
-            p1.rectangle = adjust_rectangle(p1)
+                p2.rectangle = adjust_rectangle(p2, self.dimension)
+            p1.rectangle = adjust_rectangle(p1, self.dimension)
            
             return self.adjust_tree(p1, p2)
     
     def chooseLeaf(self, start: RTree_node, point: Tuple[float, float]):
+        """
+        Choose the leaf on which to insert this point.
+
+        Takes a starting node, which is an RTree node, and a point.
+        """
         curr = start
         if curr.children == []:
             return curr
@@ -384,13 +421,18 @@ class RTree:
             min_node = None
             for i in curr.children:
                 rect = i.rectangle
-                min_x = rect[0][0]
-                min_y = rect[0][1]
-                max_x = rect[1][0]
-                max_y = rect[1][1]
+                dimension = rect.shape[1]
+                box_lengths = []
+                point_lengths = []
+                curr_area = 0
+                # Calculate lengths across each dimension
+                for j in range(dimension):
+                    box_lengths.append(rect[1][j] - rect[0][j])
+                    point_lengths.append(max(point[j], rect[1][j]) - min(point[j], rect[0][j]))
 
-                curr_area = (max_x - min_x) * (max_y - min_y)
-                new_area = (max(max_x, point[0]) - min(min_x, point[0])) * (max(max_y, point[1]) - min(min_y, point[1]))
+                curr_area = reduce(operator.mul, box_lengths, 1)
+                new_area = reduce(operator.mul, point_lengths, 1)
+
                 if new_area - curr_area < min_increase:
                     min_node = i
                     min_increase = new_area - curr_area
@@ -404,7 +446,7 @@ class RTree:
         n1, n2 = self.adjust_tree(n1, n2)
         if n2 and n1.parent == None:
             # We had to split at root.
-            self.root = RTree_node([], [n1, n2], None, []) 
+            self.root = RTree_node(bounding_rectangle(self.data), [n1, n2], None, []) 
             n1.parent = self.root
             n2.parent = self.root
 
@@ -416,6 +458,64 @@ def data_len(root):
         for i in root.children:
             length += data_len(i)
         return length
+
+def traverse3d(root, ax):
+    for i in root.children:
+        rect = i.rectangle
+        mins = rect[0]
+        maxs = rect[1]
+        faces = []
+
+        # https://stackoverflow.com/questions/44881885/python-draw-parallelepiped/49766400#49766400
+        for i in range(3):
+            curr_face = []
+            curr_face_max = []
+            curr_face.append(mins)
+            curr_face_max.append(maxs)
+            current_dimensions = [j for j in list(range(3)) if j != i]
+            
+            # visit dimension 0
+            dim0 = current_dimensions[0]
+            length = maxs[dim0] - mins[dim0]
+
+            k = mins.copy()
+            k[dim0] = mins[dim0] + length
+            curr_face.append(k)
+
+            k = maxs.copy()
+            k[dim0] = maxs[dim0] - length
+            curr_face_max.append(k)
+
+            # Visit dimension 0 and 1
+            dim1 = current_dimensions[1]
+            length2 = maxs[dim1] - mins[dim1]
+            
+            k = mins.copy()
+            k[dim1] = mins[dim1] + length2
+            k[dim0] = mins[dim0] + length
+            curr_face.append(k)
+
+            k = maxs.copy()
+            k[dim1] = maxs[dim1] - length2
+            k[dim0] = maxs[dim0] - length
+
+            curr_face_max.append(k)
+
+            # visit dimension 1
+            k = mins.copy()
+            k[dim1] = mins[dim1] + length2
+            curr_face.append(k)
+
+            k = maxs.copy()
+            k[dim1] = maxs[dim1] - length2
+            curr_face_max.append(k)
+            faces.append(curr_face)
+            faces.append(curr_face_max)
+        
+        for k in faces:
+            print(k)
+        ax.add_collection3d(Poly3DCollection(faces, facecolors='cyan', linewidths=1, edgecolors='r', alpha=.25))
+
 
 def traverse(root, fig):
     if root.children == []:
@@ -434,7 +534,7 @@ def traverse(root, fig):
         count += 1
 
 def test_long_beach():
-    root = RTree()
+    root = RTree(2)
     lst = pickle.load(open('LB.dump', 'rb'))
     # root = pickle.load(open("LB_rtree.obj", 'rb'))
     fig = plt.figure()
@@ -466,13 +566,12 @@ def test_long_beach():
 
     q_points = pickle.load(open('qpoints_LB.dump', 'rb'))
 
-    total = 0
-
     print("KNN Testing!")
     f = open("rtree_long_beach_results.txt", 'w')
     f.close()
    
     for k in [1,5,10, 50,100, 500]:
+        total = 0
         for i in q_points:
             neighbours, pages = root.root.KNN(i, [], k)
             neighbours = np.asarray(neighbours)
@@ -492,11 +591,11 @@ def test_long_beach():
     plt.show()
 
 def test_synthetics():
-    open("rtree_synthetic.txt", 'w')
+    open("rtree_synthetic_2d.txt", 'w')
     # for amount in [64000]: 
     for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
         lst = pickle.load(open(f'synthetic_{amount}.dump', 'rb'))
-        root = RTree()
+        root = RTree(2)
         for i in lst:
             # print(data_len(root.root))
             root.insert(i)
@@ -518,15 +617,16 @@ def test_synthetics():
         print(f'Average pages {total/100}')
 
         KNN_random_points = pickle.load(open(f'synthetic_qpoints_{amount}.dump', 'rb'))
-        pages = 0
         count = 0
         # for K in [100]:
         for K in [1, 5, 10, 50, 100, 500]:
+            print(f'K: {K} Current Pages: {pages}')
+            pages = 0
             for point in KNN_random_points:
                 neighbours, p = root.root.KNN(point, [], K)
                 neighbours = np.asarray(neighbours)
                 pages += p
-                actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+                actual = np.asarray([np.asarray((distance(point, i, 2), i[0], i[1])) for i in lst])
                 actual = actual[np.argsort(actual[:,0])][:K]
                 if not (actual[:, 1:] == np.asarray(neighbours[:, 1:])).all():
                     pdb.set_trace()
@@ -541,13 +641,13 @@ def test_synthetics():
                 print(f"Neighbours: {neighbours}")
                 print(f'Pages {p}')
                 count += 1
-            with open("rtree_synthetic.txt", 'a') as output:
+            with open("rtree_synthetic_2d.txt", 'a') as output:
                 output.write(f"Average pages for {K} on synthetic points {amount}: {pages/100}.\n")
             print(f"Average pages for {K}: {pages/100}")
 
 
 def test_1000():
-    root = RTree()
+    root = RTree(2)
     lst = pickle.load(open('data_1000.dump', 'rb'))
     fig = plt.figure()
 
@@ -558,20 +658,20 @@ def test_1000():
     y = np.take(lst, 1, 1)
     ax.scatter(x,y, color = 'red')
     total = 0
-    q_rects = pickle.load(open("query_rectangles_100_100x100.dump", 'rb'))
+    # q_rects = pickle.load(open("query_rectangles_100_100x100.dump", 'rb'))
 
-    count = 0
-    for i in q_rects:
-        i = np.asarray(i)
-        result, pages, ids = root.root.search(i)
-        print(f"Results: {len(result)}")
-        total += pages
-        print(f'Pages {pages}')
-        count += 1
-    print(f'Average pages {total/100}')
+    # count = 0
+    # for i in q_rects:
+    #     i = np.asarray(i)
+    #     result, pages, ids = root.root.search(i)
+    #     print(f"Results: {len(result)}")
+    #     total += pages
+    #     print(f'Pages {pages}')
+    #     count += 1
+    # print(f'Average pages {total/100}')
 
-    result, pages, ids = root.root.search(np.asarray(((20, 20), (45, 45))))
-    print(f'pages {pages}')
+    # result, pages, ids = root.root.search(np.asarray(((20, 20), (45, 45))))
+    # print(f'pages {pages}')
 
     q_points = pickle.load(open('qpoints_100.dump', 'rb'))
 
@@ -587,9 +687,12 @@ def test_1000():
         total += pages
         print(f'Point {i}')
         print(f'Neighbours {neighbours}')
-        actual = np.asarray([np.asarray((distance(point, i), point[0], point[1])) for point in lst])
+        actual = np.asarray([np.asarray((distance(point, i, 2), point[0], point[1])) for point in lst])
         actual = actual[np.argsort(actual[:,0])][:K]
         print(f"Actual {actual}")
+        if not (actual == neighbours).all():
+            print("OOF")
+            raise Exception("OOF")
         for i in actual:
             print(i)
         print(f'Pages {pages}')
@@ -598,6 +701,152 @@ def test_1000():
     pdb.set_trace()
     traverse(root.root, ax)
     plt.show()
+
+def test_nd():
+    open("rtree_synthetic_nd.txt", "w")
+    for dimension in [3,4,5,6]:
+        for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
+            root = RTree(dimension)
+            lst = pickle.load(open(f'synthetic_{amount}_{dimension}d.dump', 'rb'))
+            for i in lst:
+                root.insert(i)
+
+            # Create qpoints for dimension, between [0, 8000] for all dimensions, and 100 of these points.
+            q_points = generate_numbers(0, 8000, 100, dimension)
+            # pickle.dump(q_points, open(f'synthetic_qpoints_{dimension}d.dump', 'wb'))
+            q_points = pickle.load(open(f'synthetic_qpoints_{dimension}d.dump', 'rb'))
+            with open('rtree_synthetic_nd.txt','w') as output:
+                output.write(f"{dimension}D:\n")
+            
+            total = 0
+            for K in [1, 5, 10, 50, 100, 500]: 
+                count = 0
+                for point in q_points:
+                    neighbours, pages = root.root.KNN(point, [], K)
+                    neighbours = np.asarray(neighbours)
+                    total += pages
+                    print(f'Point {i}')
+                    print(f'Neighbours {neighbours}')
+                    actual = np.asarray([np.asarray((distance(i, point, dimension), *i)) for i in lst])
+                    actual = actual[np.argsort(actual[:,0])][:K]
+                    print(f"Actual {actual}")
+                    count += 1
+                    if not (actual == neighbours).all():
+                        pdb.set_trace()
+                        raise Exception(f"{dimension}, {amount}, {K}, {count} = BIG OOF")
+                    print(f'Pages {pages}')
+                with open('rtree_synthetic_nd.txt', 'a') as output:
+                    output.write(f"Average pages for {K} on synthetic points {amount} for dimension {dimension}D: {pages/100}.\n")
+                print(f'Average pages is {total/100}\n')
+def test_3d():
+    root = RTree(3)
+    lst = generate_numbers(0, 100, 1000, 3)
+    # pickle.dump(lst, open("3d_test.dump", 'wb'))
+    # lst = pickle.load(open("3d_test.dump", 'rb'))
+    # lst = [(0,0,0), (5, 5, 5), (1,2,3), (4,2,3), (0,1,0)]
+    lst = [np.asarray(i) for i in lst]
+    lst = np.asarray(lst)
+    total = 0
+    for i in lst:
+        root.insert(i)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection = '3d')
+    ax.scatter(np.take(lst, 0, 1), np.take(lst, 1, 1), np.take(lst, 2, 1))
+    traverse3d(root.root, ax)
+    pdb.set_trace()
+
+    q_rects = []
+    for i in range(100):
+        a = generate_numbers(0, 100, 1, 3)
+        b = generate_numbers(0, 100, 1, 3)
+        points = np.vstack((a,b))
+        mins = [np.min(points[:, i]) for i in range(3)]
+        maxs = [np.max(points[:, i]) for i in range(3)]
+        q_rect = np.asarray((mins, maxs))
+        q_rects.append(q_rect)
+    
+    count = 0
+    for i in q_rects:
+        i = np.asarray(i)
+        result, pages, ids = root.root.search(i)
+        actual = [j for j in lst if overlap(j, i)]
+        if len(actual) != len(result):
+            print("OOF")
+            raise(count)
+        print(f"Results: {len(result)}")
+        print(f"Actual: {len(actual)}")
+        print(f'Pages {pages}')
+        count += 1
+
+    q_points = generate_numbers(0, 100, 100, 3)
+    pickle.dump(q_points, open('qpoints_3d.dump', 'wb'))
+
+    total = 0
+
+    print("KNN Testing!")
+
+    K = 10
+    
+    for i in q_points:
+        neighbours, pages = root.root.KNN(i, [], K)
+        neighbours = np.asarray(neighbours)
+        total += pages
+        print(f'Point {i}')
+        print(f'Neighbours {neighbours}')
+        actual = np.asarray([np.asarray((distance(point, i, 3), *point)) for point in lst])
+        actual = actual[np.argsort(actual[:,0])][:K]
+        print(f"Actual {actual}")
+        if not (actual == neighbours).all():
+            raise Exception("OOF")
+        for i in actual:
+            print(i)
+        print(f'Pages {pages}')
+    print(f'Average pages is {total/100}\n')
+
+    pdb.set_trace()
+    plt.show()
+
+    # q_rects = pickle.load(open("query_rectangles_100_100x100.dump", 'rb'))
+
+    # count = 0
+    # for i in q_rects:
+    #     i = np.asarray(i)
+    #     result, pages, ids = root.root.search(i)
+    #     print(f"Results: {len(result)}")
+    #     total += pages
+    #     print(f'Pages {pages}')
+    #     count += 1
+    # print(f'Average pages {total/100}')
+
+    # result, pages, ids = root.root.search(np.asarray(((20, 20), (45, 45))))
+    # print(f'pages {pages}')
+
+    # q_points = pickle.load(open('qpoints_100.dump', 'rb'))
+
+    # total = 0
+
+    # print("KNN Testing!")
+
+    # K = 10
+    # 
+    # for i in q_points:
+    #     neighbours, pages = root.root.KNN(i, [], K)
+    #     neighbours = np.asarray(neighbours)
+    #     total += pages
+    #     print(f'Point {i}')
+    #     print(f'Neighbours {neighbours}')
+    #     actual = np.asarray([np.asarray((distance(point, i), point[0], point[1])) for point in lst])
+    #     actual = actual[np.argsort(actual[:,0])][:K]
+    #     print(f"Actual {actual}")
+    #     for i in actual:
+    #         print(i)
+    #     print(f'Pages {pages}')
+    # print(f'Average pages is {total/100}\n')
+
+    # pdb.set_trace()
+    # traverse(root.root, ax)
+    # plt.show()
 if __name__ == '__main__':
     # pdb.set_trace()
     # root = RTree()
@@ -605,9 +854,11 @@ if __name__ == '__main__':
     # for i in range(5):
     #     pdb.set_trace()
     #     root.insert(lst[i])
-    # test_synthetics()
+    test_synthetics()
     # test_1000()
-    test_long_beach()
+    # test_3d()
+    # test_nd()
+    # test_long_beach()
     # pdb.set_trace()
     # root = RTree()
     # root.insert((2,3))
