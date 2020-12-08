@@ -575,7 +575,7 @@ def test_long_beach():
         for i in q_points:
             neighbours, pages = root.root.KNN(i, [], k)
             neighbours = np.asarray(neighbours)
-            actual = np.asarray([np.asarray((distance(point, i), point[0], point[1])) for point in lst])
+            actual = np.asarray([np.asarray((distance(point, i, 2), point[0], point[1])) for point in lst])
             actual = actual[np.argsort(actual[:,0])]
             print(actual[:k])
 
@@ -854,11 +854,11 @@ if __name__ == '__main__':
     # for i in range(5):
     #     pdb.set_trace()
     #     root.insert(lst[i])
-    test_synthetics()
+    # test_synthetics()
     # test_1000()
     # test_3d()
     # test_nd()
-    # test_long_beach()
+    test_long_beach()
     # pdb.set_trace()
     # root = RTree()
     # root.insert((2,3))
