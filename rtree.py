@@ -620,8 +620,8 @@ def test_synthetics():
         count = 0
         # for K in [100]:
         for K in [1, 5, 10, 50, 100, 500]:
-            print(f'K: {K} Current Pages: {pages}')
             pages = 0
+            print(f'K: {K} Current Pages: {pages}')
             for point in KNN_random_points:
                 neighbours, p = root.root.KNN(point, [], K)
                 neighbours = np.asarray(neighbours)

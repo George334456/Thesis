@@ -928,9 +928,10 @@ def test_nd():
     values = {3: [10, 10, 10], 4:[ 8, 8, 8, 8], 5: [7, 7, 7, 7, 7], 6: [6, 6, 6, 6, 6, 6]}
     for dimension in [3, 4, 5, 6]:
         for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
+            lst = pickle.load(open(f'synthetic_{amount}_{dimension}d.dump', 'rb'))
             T_i = values[dimension]
             Theta = create_cells(lst, T_i)
-            partitions, full_lst = mapping_list_partitions(lst, Theta, T_i, 10)
+            partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 10)
 
             M = [partitions[0][0]]
             for i in partitions:
@@ -942,7 +943,6 @@ def test_nd():
             cells = []
             for i in range(len(bounding_rectangles)):
                 cells.append(Cell(i, bounding_rectangles[i]))
-            pdb.set_trace()
 
             shards = create_shards(params, full_lst, psi, cells)
             mins = []
@@ -951,16 +951,16 @@ def test_nd():
                 mins.append(np.min(lst[:,i]))
                 maxs.append(np.max(lst[:,i]))
 
-            q_points = pickle.load(f'synthetic_qpoints_{dimension}d.dump', 'rb')
+            q_points = pickle.load(open(f'synthetic_qpoints_{dimension}d.dump', 'rb'))
 
             for K in [1, 5, 10, 50, 100, 500]:
                 pages = 0
-                for point in KNN_random_points:
+                for point in q_points:
                     nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
                     nearest = np.asarray(nearest)
                     nearest = nearest[np.argsort(nearest[:, 0])]
                     pages += p
-                    actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+                    actual = np.asarray([np.asarray((distance(point, i), *i)) for i in lst])
                     actual = actual[np.argsort(actual[:,0])][:K]
                     if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
                         print(actual)
@@ -1323,7 +1323,8 @@ def test_long_beach():
 if __name__ == "__main__":
 
     # test_1000()
-    test_synthetics()
+    # test_synthetics()
+    test_nd()
     # test_3d()
     # test_long_beach()
     # pdb.set_trace()
