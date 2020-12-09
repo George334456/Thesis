@@ -715,12 +715,12 @@ def test_nd():
             q_points = generate_numbers(0, 8000, 100, dimension)
             # pickle.dump(q_points, open(f'synthetic_qpoints_{dimension}d.dump', 'wb'))
             q_points = pickle.load(open(f'synthetic_qpoints_{dimension}d.dump', 'rb'))
-            with open('rtree_synthetic_nd.txt','w') as output:
+            with open('rtree_synthetic_nd.txt','a') as output:
                 output.write(f"{dimension}D:\n")
             
-            total = 0
             for K in [1, 5, 10, 50, 100, 500]: 
                 count = 0
+                total = 0
                 for point in q_points:
                     neighbours, pages = root.root.KNN(point, [], K)
                     neighbours = np.asarray(neighbours)
@@ -736,7 +736,7 @@ def test_nd():
                         raise Exception(f"{dimension}, {amount}, {K}, {count} = BIG OOF")
                     print(f'Pages {pages}')
                 with open('rtree_synthetic_nd.txt', 'a') as output:
-                    output.write(f"Average pages for {K} on synthetic points {amount} for dimension {dimension}D: {pages/100}.\n")
+                    output.write(f"Average pages for {K} on synthetic points {amount} for dimension {dimension}D: {total/100}.\n")
                 print(f'Average pages is {total/100}\n')
 def test_3d():
     root = RTree(3)
@@ -857,8 +857,8 @@ if __name__ == '__main__':
     # test_synthetics()
     # test_1000()
     # test_3d()
-    # test_nd()
-    test_long_beach()
+    test_nd()
+    # test_long_beach()
     # pdb.set_trace()
     # root = RTree()
     # root.insert((2,3))

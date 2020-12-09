@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import pdb
 import pickle
+import time
 """
 Quick Reminders:
 Theta = Border points generated along every axis
@@ -702,16 +703,25 @@ def KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells):
     Uses the MINDIST/MINMAXDIST ordering to prune the search set.
     """
     # Generate cells to visit by mindist/minmaxdist.
+    # timer = []
+    # timer1 = []
+    # timer2 = []
+    # timer3 = []
     nearest = []
     pages = 0
     branches = []
     page_set = set()
+    shard_set = set()
+
+    # d = time.time()
     for i in cells:
         # Force prune to never happen based off of minmaxdist
         # Set min_max_dist to infinity because cells aren't MBRs.
         branches.append((float('inf'), min_dist(point, i.bounding_rectangle), i))
     branches = sort_branches(branches, True)
     branches = prune(branches, nearest, k)
+    # timer3.append(time.time() - d)
+    # a = time.time()
 
     while len(branches) > 0:
         cell = branches.pop(0)[-1]
@@ -724,17 +734,27 @@ def KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells):
         # the cell that we are visiting?
         for shard_index in cell.shards:
             ind, id = shard_index
+            
+            # Perhaps we are revisiting too many shards.
+            if shard_index in shard_set:
+                continue
+            shard_set.add(shard_index)
             shard = shards[ind].get(id)
 
             # Get all the bounding rectangles associated with this shard. Only "visit" based on the closest min_dist to the point.
+
+      #      b = time.time()
             entries = np.asarray([(min_max_dist(point, br.rectangle), min_dist(point, br.rectangle), ind, br, shard) for br in shard.get_bounding_rectangles()])
             to_visit.extend(entries[np.argsort(entries[:,1])])
+       #     timer1.append(time.time() - b)
 
         # pdb.set_trace()
         to_visit = sort_branches(to_visit)
 
         # Do downwards pruning
         to_visit = prune(to_visit, nearest, k)
+        
+        #a = time.time()
         while len(to_visit) > 0:
             #TODO: DO NOT JUST LOOK FOR THE BOUNDING RECTANGLE
             # This bounding rectangle can overlap many different shards, resulting in additional accesses.
@@ -759,8 +779,15 @@ def KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells):
 
             # Do pruning amongst the shard set
             to_visit = prune(to_visit, nearest, k)
+        #timer.append(time.time() - a)
         
+        #c = time.time()
         branches = prune(branches, nearest, k) # Prune the branches based off of increasing nearest.
+        #timer2.append(time.time()- c)
+    #print(f"Took {sum(timer)} seconds to visiting")
+    #print(f'Took {sum(timer1)} generating the shard_list')
+    #print(f'Took {sum(timer2)} pruning branches')
+    #print(f'Took {sum(timer3)} generating and sorting the branches')
     return nearest, len(page_set)
 
 def KNN(k, delta, point, Theta, params, shards, M, T_i, psi):
@@ -926,8 +953,10 @@ def test_synthetics():
 def test_nd():
     open('lisa_synthetic_nd.txt', 'w')
     values = {3: [10, 10, 10], 4:[ 8, 8, 8, 8], 5: [7, 7, 7, 7, 7], 6: [6, 6, 6, 6, 6, 6]}
-    for dimension in [3, 4, 5, 6]:
-        for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
+    for dimension in [6]:
+#    for dimension in [3, 4, 5, 6]:
+        for amount in [64000]:
+        # for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
             lst = pickle.load(open(f'synthetic_{amount}_{dimension}d.dump', 'rb'))
             T_i = values[dimension]
             Theta = create_cells(lst, T_i)
@@ -950,13 +979,18 @@ def test_nd():
             for i in range(dimension):
                 mins.append(np.min(lst[:,i]))
                 maxs.append(np.max(lst[:,i]))
+            with open("lisa_synthetic_nd.txt", 'a') as output:
+                output.write(f"Dimension {dimension}\n")
 
             q_points = pickle.load(open(f'synthetic_qpoints_{dimension}d.dump', 'rb'))
-
-            for K in [1, 5, 10, 50, 100, 500]:
+            for K in [500]:
+            # for K in [1, 5, 10, 50, 100, 500]:
                 pages = 0
-                for point in q_points:
+                for point in [q_points[0]]:
+#                for point in q_points:
+                    a = time.time()
                     nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+                    print(f'Took {time.time() - a} seconds to KNN')
                     nearest = np.asarray(nearest)
                     nearest = nearest[np.argsort(nearest[:, 0])]
                     pages += p
@@ -1187,27 +1221,27 @@ def test_long_beach():
     open("lisa_long_beach_query.txt", 'w')
 
     # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
-    # T_i = [100, 100]
+    T_i = [100, 100]
 
-    # Theta = create_cells(lst, T_i)
-    # pdb.set_trace()
+    Theta = create_cells(lst, T_i)
+    pdb.set_trace()
 
-    # bounding_rectangles = decompose_query(Theta, np.asarray((Theta[0][0], Theta[1][0])), np.asarray((Theta[0][-1], Theta[1][-1])))
-    # cells = []
-    # for i in range(len(bounding_rectangles)):
-    #     cells.append(Cell(i, bounding_rectangles[i]))
+    bounding_rectangles = decompose_query(Theta, np.asarray((Theta[0][0], Theta[1][0])), np.asarray((Theta[0][-1], Theta[1][-1])))
+    cells = []
+    for i in range(len(bounding_rectangles)):
+        cells.append(Cell(i, bounding_rectangles[i]))
 
-    # pdb.set_trace()
+    pdb.set_trace()
 
-    # partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 10) # Create 10 equal length partitions of the mapping space.
+    partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 10) # Create 10 equal length partitions of the mapping space.
 
-    # M = [partitions[0][0]]
-    # for i in partitions:
-    #     M.append(i.max())
-    # psi = 50
-    # params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
-    # shards = create_shards(params, full_lst, psi, cells)
-    # pickle.dump([params, shards, M, T_i, psi, Theta, cells], open("long_beach_lisa_10bp.obj", 'wb'))
+    M = [partitions[0][0]]
+    for i in partitions:
+        M.append(i.max())
+    psi = 50
+    params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+    shards = create_shards(params, full_lst, psi, cells)
+    pickle.dump([params, shards, M, T_i, psi, Theta, cells], open("long_beach_lisa_10bp.obj", 'wb'))
 
     min_x = np.min(lst[:,0])
     min_y = np.min(lst[:,1])
@@ -1323,8 +1357,8 @@ def test_long_beach():
 if __name__ == "__main__":
 
     # test_1000()
-    # test_synthetics()
-    test_nd()
+    test_synthetics()
+    # test_nd()
     # test_3d()
     # test_long_beach()
     # pdb.set_trace()
