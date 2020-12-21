@@ -112,19 +112,21 @@ def train(partitions, sigma, psi):
             print(grad)
             grad = grad.flatten()[1:] # Grab everything except the first element.
             meme = time.time()
-            for i in [0.001, 0.01, 0.05, 0.1]: # Possible learning rates
+            for i in [0.1, 0.05, 0.01, 0.001]: # Possible learning rates
                 beta_lr = (grad * i) + beta # Descend in the gradient. TODO: MAKE SURE THIS IS DOING ELEMENT WISE ADDITION
                 beta_lr = cp.sort(beta_lr)
                 try:
                     alpha, A = calculate_alpha(partition, beta_lr, y)
                 except:
-                    # If we fail to calculate_alpha properly, then we just say, okay, this is considered optimal
+                    # If we fail to calculate_alpha properly, then we just say, okay, look at the next one.
                     continue
                 if check_alpha(alpha):
                     loss = calculate_loss(A, alpha, y)
                     if loss < curr_loss:
                         curr_loss = loss
                         curr_beta_lr = beta_lr
+                        # Since we're counting from max to low, we want to be greedy and break out immediately
+                        break
             print(f'{time.time() - meme} for descent')
             if curr_beta_lr is not None:
                 # We found something that had loss minimizing.
