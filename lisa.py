@@ -11,6 +11,7 @@ import pdb
 import pickle
 import time
 import operator
+import cupy as cp
 """
 Quick Reminders:
 Theta = Border points generated along every axis
@@ -28,16 +29,17 @@ def check_alpha(alpha):
     """
     alpha = alpha.flatten()[1:]
     for i in range(len(alpha)):
-        inds = [True]*(i + 1) + [False]*(len(alpha)-(i + 1))
-        if np.sum(alpha, where=inds) < 0:
+        if cp.sum(alpha[:i+1]) < 0:
             return False
     return True
 
 def calculate_loss(A, alpha, y):
     """
     Calculate the loss function from A, alpha, y
+
+    A, alpha, and y are cupy arrays
     """
-    return np.sum(np.apply_along_axis(lambda x: x * x, 1, (A @ alpha) - y))
+    return cp.sum(cp.power(A @ alpha - y, 2))
 
 def dfs(list_of_list, max_depth, depth):
     """
@@ -69,7 +71,8 @@ def train(partitions, sigma, psi):
     Return the parameters for the piecewise monotone linear regression model.
 
     Partitions are a K x V array. Note that V might not be the same across all K. IE V is partition specific.
-    sigma is the number of breakpoints we want. In accordance to the paper, we pass it in as sigma + 1.
+    sigma is the number of breakpoints we want. Is an int. In accordance to the paper, we pass it in as sigma + 1.
+    psi is an integer representing the average number of things to 
     """
     # Change psi as we increase the number of points it can take.
     settings = []
@@ -78,10 +81,10 @@ def train(partitions, sigma, psi):
 
     for partition in partitions:
         V = len(partition)
-        y = np.arange(V).reshape([V, 1])
-        beta = np.zeros([1,sigma])
+        y = cp.arange(V).reshape([V, 1])
+        beta = cp.zeros([1,sigma])
         for i in range(sigma):
-            ind = np.floor(i * V/sigma)
+            ind = cp.floor(i * V/sigma)
             # ind = np.floor(i * V/psi)
             beta[0][i] = partition[int(ind)] # Initialize with an integer
 
@@ -102,13 +105,16 @@ def train(partitions, sigma, psi):
         while(num_iterations < 1000):
             print(curr_loss)
             print(beta)
+            meme = time.time()
             grad = calculate_gradient(alpha, beta, partition, A, y)
+            print(f'{time.time() - meme} s for calculate gradient')
             print(num_iterations)
             print(grad)
             grad = grad.flatten()[1:] # Grab everything except the first element.
+            meme = time.time()
             for i in [0.001, 0.01, 0.05, 0.1]: # Possible learning rates
                 beta_lr = (grad * i) + beta # Descend in the gradient. TODO: MAKE SURE THIS IS DOING ELEMENT WISE ADDITION
-                beta_lr = np.sort(beta_lr)
+                beta_lr = cp.sort(beta_lr)
                 try:
                     alpha, A = calculate_alpha(partition, beta_lr, y)
                 except:
@@ -119,6 +125,7 @@ def train(partitions, sigma, psi):
                     if loss < curr_loss:
                         curr_loss = loss
                         curr_beta_lr = beta_lr
+            print(f'{time.time() - meme} for descent')
             if curr_beta_lr is not None:
                 # We found something that had loss minimizing.
                 beta = curr_beta_lr
@@ -133,6 +140,29 @@ def train(partitions, sigma, psi):
         settings.append((alpha.flatten(), beta.flatten(), (A @ alpha).flatten()))
     return settings
 
+def fill_grid(partition, constant, comparison):
+    partition = partition.flatten()
+    row = np.zeros(len(partition))
+    for i in range(len(partition)):
+        row[i] = comparison(partition[i], constant)
+    return row
+
+def fill_A_row(partition, beta, comparison):
+    """
+    Fill a row in the A matrix.
+
+    partition is an integer.
+    Beta is a 1 x M array
+    Comparison is a function to use for creating the row.
+    """
+    print(partition, beta, comparison)
+    pdb.set_trace()
+    row = np.zeros(beta.shape[1] + 1)
+    row[0] = 0
+    row[1:] = np.asarray([partition - beta if partition > beta else 0])
+    return row
+
+
 def calculate_gradient(alpha, beta, partition, A, y):
     """
     Calculates the gradient based on alpha/beta/partition/A/y
@@ -146,23 +176,27 @@ def calculate_gradient(alpha, beta, partition, A, y):
     returns a (1 x sigma + 1) matrix. Should be the same shape as beta passed in.
 
     """
-    K = np.diag(alpha.flatten()) # Construct the diagonal matrix.
+    K = cp.diag(alpha.flatten()) # Construct the diagonal matrix.
     sigma = alpha.shape[0]
     V = len(partition)
     partition = partition.reshape([1,V])
     G = np.zeros([sigma, V])
     G[0] = -1
     count = 1
+    meme = time.time()
     for i in beta.flatten():
+        i = cp.asnumpy(i)
         G[count] = np.apply_along_axis(lambda x, b: -1 if x >= b else 0, 0, partition, i)
         count += 1
+    print(f'{time.time() - meme} for gradient')
+    G = cp.asarray(G)
     r = A @ alpha - y
     g = 2 * (K @ G @ r)
     Y = 2 * (K @ G @ G.T @ K.T)
-    if np.linalg.det(Y) == 0:
+    if cp.linalg.det(Y) == 0:
         print('Determinant of 0')
         return -g # Return the gradient if Y is singular
-    inv = np.linalg.inv(Y)
+    inv = cp.linalg.inv(Y)
     s = -inv @ g
     return s
 
@@ -178,17 +212,21 @@ def calculate_alpha(partition, beta, y):
     """
     V = len(partition)
     sigma = beta.shape[1] # How many betas we got???
-    y = np.arange(V).reshape([V,1])
+    y = cp.arange(V).reshape([V,1])
     A = np.zeros([V, sigma + 1]) # Remember that a row in A is [1, xi-B0, (xi - B1) if xi >= B1, ..., xi - B_sigma, if x 0 > = B_sigma]. This is len(beta) + 1 == sigma + 1 + 1
     count = 0
+    meme = time.time()
+    beta = cp.asnumpy(beta)
     for i in partition:
         row = np.zeros([1, sigma + 1])
         row[0][0] = 1
         row[0][1:] = np.apply_along_axis(lambda b, x: x - b if x > b else 0, 0, beta, i)
-        A[count] = row
+        A[count] = row.flatten()
         count += 1
-    inv = np.linalg.inv(np.matmul(A.T, A))
-    alpha = np.matmul(np.matmul(inv, A.T), y) # Alpha is a bar, a0, a1 ,..., a_sigma
+    print(f'{time.time() - meme} seconds for calculate_alpha')
+    A = cp.asarray(A)
+    inv = cp.linalg.inv(cp.matmul(A.T, A))
+    alpha = cp.matmul(cp.matmul(inv, A.T), y) # Alpha is a bar, a0, a1 ,..., a_sigma
     return alpha, A
 
 def find_interval(point, Theta, T_i):
@@ -1805,56 +1843,57 @@ class kd_tree_implementation:
 
     def test_long_beach():
         lst = pickle.load(open('LB.dump', 'rb'))
-        params, shards, psi, cells = pickle.load(open("long_beach_klisa_10bp.obj", 'rb'))
+        # params, shards, psi, cells = pickle.load(open("long_beach_klisa_10bp.obj", 'rb'))
         open("klisa_long_beach_query.txt", 'w')
 
         dimension = 2
 
         # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
-        # mins, maxs, data = kd.get_leaves(lst, 16) # Should have a total of 32 leaves
-        # pdb.set_trace()
+        mins, maxs, data = kd.get_leaves(lst, 16) # Should have a total of 32 leaves
+        pdb.set_trace()
     
-        # bounding_rects = []
-        # indices = {}
-        # cells = []
+        bounding_rects = []
+        indices = {}
+        cells = []
     
-        # for i in range(len(mins)):
-        #     rect = (tuple(mins[i]), (tuple(maxs[i])))
-        #     bounding_rects.append(rect)
-        #     indices[rect] = i
+        for i in range(len(mins)):
+            rect = (tuple(mins[i]), (tuple(maxs[i])))
+            bounding_rects.append(rect)
+            indices[rect] = i
     
-        # # Sort based off of monotonicity condition.
-        # pdb.set_trace()
-        # bounding_rects_sorted = bounding_rects.copy()
-        # mergeSort(bounding_rects_sorted)
-        # k = np.asarray([indices[i] for i in bounding_rects_sorted])
+        # Sort based off of monotonicity condition.
+        pdb.set_trace()
+        bounding_rects_sorted = bounding_rects.copy()
+        mergeSort(bounding_rects_sorted)
+        k = np.asarray([indices[i] for i in bounding_rects_sorted])
     
-        # mins = mins[k]
-        # maxs = maxs[k]
-        # data = [data[i] for i in k]
-        # 
-        # # Create the cells
-        # for i in range(len(mins)):
-        #     cell = Cell(i, (mins[i], maxs[i]))
-        #     for j in data[i]:
-        #         cell.add_data(j)
-        #     cells.append(cell)
-        #     print(f'Cell: {i}, data: {len(cell.data)}')
+        mins = mins[k]
+        maxs = maxs[k]
+        data = [data[i] for i in k]
+        
+        # Create the cells
+        for i in range(len(mins)):
+            cell = Cell(i, (mins[i], maxs[i]))
+            for j in data[i]:
+                cell.add_data(j)
+            cells.append(cell)
+            print(f'Cell: {i}, data: {len(cell.data)}')
     
-        # # Check cells:
-        # for i in range(len(mins)-1, -1, -1):
-        #     br1 = cells[i].bounding_rectangle
-        #     for j in range(i-1,-1, -1):
-        #         br2 = cells[j].bounding_rectangle
-        #         if (br1[0] < br2[1]).all():
-        #             print(i, j)
-        #             # raise Exception(f'cell {i} is greater than cell {j}')
+        # Check cells:
+        for i in range(len(mins)-1, -1, -1):
+            br1 = cells[i].bounding_rectangle
+            for j in range(i-1,-1, -1):
+                br2 = cells[j].bounding_rectangle
+                if (br1[0] < br2[1]).all():
+                    print(i, j)
+                    # raise Exception(f'cell {i} is greater than cell {j}')
     
-        # partitions, full_lst = mapping_list_partition_cells(cells, 3)
-        # psi = 50
-        # params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
-        # shards = create_shards(params, full_lst, psi, cells)
-        # pickle.dump([params, shards, psi, cells], open("long_beach_klisa_10bp.obj", 'wb'))
+        partitions, full_lst = mapping_list_partition_cells(cells, 3)
+        psi = 50
+        pdb.set_trace()
+        params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+        shards = create_shards(params, full_lst, psi, cells)
+        pickle.dump([params, shards, psi, cells], open("long_beach_klisa_10bp.obj", 'wb'))
 
 
         KNN_random_points = pickle.load(open('qpoints_LB.dump', 'rb'))
@@ -1882,8 +1921,8 @@ class kd_tree_implementation:
 if __name__ == "__main__":
     # test_images()
     # kd_tree_implementation.test_1000()
-    # kd_tree_implementation.test_long_beach()
-    kd_tree_implementation.test_images()
+    kd_tree_implementation.test_long_beach()
+    # kd_tree_implementation.test_images()
     # test_synthetics()
     # test_nd()
     # test_3d()
