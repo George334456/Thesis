@@ -102,10 +102,13 @@ def train(partitions, sigma, psi):
         while(num_iterations < 1000):
             print(curr_loss)
             print(beta)
+            meme = time.time()
             grad = calculate_gradient(alpha, beta, partition, A, y)
+            print(f'{time.time() - meme} to calculate gradient')
             print(num_iterations)
             print(grad)
             grad = grad.flatten()[1:] # Grab everything except the first element.
+            meme = time.time()
             for i in [0.001, 0.01, 0.05, 0.1]: # Possible learning rates
                 beta_lr = (grad * i) + beta # Descend in the gradient. TODO: MAKE SURE THIS IS DOING ELEMENT WISE ADDITION
                 beta_lr = np.sort(beta_lr)
@@ -119,6 +122,7 @@ def train(partitions, sigma, psi):
                     if loss < curr_loss:
                         curr_loss = loss
                         curr_beta_lr = beta_lr
+            print(f'{time.time() - meme} for gradient descent')
             if curr_beta_lr is not None:
                 # We found something that had loss minimizing.
                 beta = curr_beta_lr
@@ -181,12 +185,14 @@ def calculate_alpha(partition, beta, y):
     y = np.arange(V).reshape([V,1])
     A = np.zeros([V, sigma + 1]) # Remember that a row in A is [1, xi-B0, (xi - B1) if xi >= B1, ..., xi - B_sigma, if x 0 > = B_sigma]. This is len(beta) + 1 == sigma + 1 + 1
     count = 0
+    meme = time.time()
     for i in partition:
         row = np.zeros([1, sigma + 1])
         row[0][0] = 1
         row[0][1:] = np.apply_along_axis(lambda b, x: x - b if x > b else 0, 0, beta, i)
         A[count] = row
         count += 1
+    print(f'{time.time()- meme} for calculating alpha')
     inv = np.linalg.inv(np.matmul(A.T, A))
     alpha = np.matmul(np.matmul(inv, A.T), y) # Alpha is a bar, a0, a1 ,..., a_sigma
     return alpha, A
@@ -1805,56 +1811,56 @@ class kd_tree_implementation:
 
     def test_long_beach():
         lst = pickle.load(open('LB.dump', 'rb'))
-        params, shards, psi, cells = pickle.load(open("long_beach_klisa_10bp.obj", 'rb'))
+        # params, shards, psi, cells = pickle.load(open("long_beach_klisa_10bp.obj", 'rb'))
         open("klisa_long_beach_query.txt", 'w')
 
         dimension = 2
 
         # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
-        # mins, maxs, data = kd.get_leaves(lst, 16) # Should have a total of 32 leaves
-        # pdb.set_trace()
+        mins, maxs, data = kd.get_leaves(lst, 16) # Should have a total of 32 leaves
+        pdb.set_trace()
     
-        # bounding_rects = []
-        # indices = {}
-        # cells = []
+        bounding_rects = []
+        indices = {}
+        cells = []
     
-        # for i in range(len(mins)):
-        #     rect = (tuple(mins[i]), (tuple(maxs[i])))
-        #     bounding_rects.append(rect)
-        #     indices[rect] = i
+        for i in range(len(mins)):
+            rect = (tuple(mins[i]), (tuple(maxs[i])))
+            bounding_rects.append(rect)
+            indices[rect] = i
     
-        # # Sort based off of monotonicity condition.
-        # pdb.set_trace()
-        # bounding_rects_sorted = bounding_rects.copy()
-        # mergeSort(bounding_rects_sorted)
-        # k = np.asarray([indices[i] for i in bounding_rects_sorted])
+        # Sort based off of monotonicity condition.
+        pdb.set_trace()
+        bounding_rects_sorted = bounding_rects.copy()
+        mergeSort(bounding_rects_sorted)
+        k = np.asarray([indices[i] for i in bounding_rects_sorted])
     
-        # mins = mins[k]
-        # maxs = maxs[k]
-        # data = [data[i] for i in k]
-        # 
-        # # Create the cells
-        # for i in range(len(mins)):
-        #     cell = Cell(i, (mins[i], maxs[i]))
-        #     for j in data[i]:
-        #         cell.add_data(j)
-        #     cells.append(cell)
-        #     print(f'Cell: {i}, data: {len(cell.data)}')
+        mins = mins[k]
+        maxs = maxs[k]
+        data = [data[i] for i in k]
+        
+        # Create the cells
+        for i in range(len(mins)):
+            cell = Cell(i, (mins[i], maxs[i]))
+            for j in data[i]:
+                cell.add_data(j)
+            cells.append(cell)
+            print(f'Cell: {i}, data: {len(cell.data)}')
     
-        # # Check cells:
-        # for i in range(len(mins)-1, -1, -1):
-        #     br1 = cells[i].bounding_rectangle
-        #     for j in range(i-1,-1, -1):
-        #         br2 = cells[j].bounding_rectangle
-        #         if (br1[0] < br2[1]).all():
-        #             print(i, j)
-        #             # raise Exception(f'cell {i} is greater than cell {j}')
+        # Check cells:
+        for i in range(len(mins)-1, -1, -1):
+            br1 = cells[i].bounding_rectangle
+            for j in range(i-1,-1, -1):
+                br2 = cells[j].bounding_rectangle
+                if (br1[0] < br2[1]).all():
+                    print(i, j)
+                    # raise Exception(f'cell {i} is greater than cell {j}')
     
-        # partitions, full_lst = mapping_list_partition_cells(cells, 3)
-        # psi = 50
-        # params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
-        # shards = create_shards(params, full_lst, psi, cells)
-        # pickle.dump([params, shards, psi, cells], open("long_beach_klisa_10bp.obj", 'wb'))
+        partitions, full_lst = mapping_list_partition_cells(cells, 3)
+        psi = 50
+        params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+        shards = create_shards(params, full_lst, psi, cells)
+        pickle.dump([params, shards, psi, cells], open("long_beach_klisa_10bp.obj", 'wb'))
 
 
         KNN_random_points = pickle.load(open('qpoints_LB.dump', 'rb'))
