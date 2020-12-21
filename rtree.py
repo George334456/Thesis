@@ -11,6 +11,7 @@ import math
 import pickle
 import operator
 from functools import reduce
+import time
 
 M =50 # Arbitrarily set M.
 # M = 2
@@ -533,6 +534,36 @@ def traverse(root, fig):
         # traverse(i, ax)
         count += 1
 
+def test_images():
+    root = RTree(6)
+    lst = pickle.load(open('6d_cifar_100', 'rb'))
+    # root = pickle.load(open("LB_rtree.obj", 'rb'))
+    for i in lst:
+        root.insert(i)
+    total = 0
+    q_points = pickle.load(open('qpoints_images.dump', 'rb'))
+
+    print("KNN Testing!")
+    f = open("rtree_images_cifar_100_results.txt", 'w')
+    f.close()
+   
+    for k in [1,5,10, 50,100, 500]:
+        total = 0
+        for i in q_points:
+            neighbours, pages = root.root.KNN(i, [], k)
+            neighbours = np.asarray(neighbours)
+            actual = np.asarray([np.asarray((distance(point, i, 2), point[0], point[1])) for point in lst])
+            actual = actual[np.argsort(actual[:,0])]
+            print(actual[:k])
+
+            total += pages
+            print(f'Point {i}')
+            print(f'Neighbours {neighbours}')
+            print(f'Pages {pages}')
+        with open("rtree_images_cifar_100_results.txt", 'a') as out:
+            out.write(f'Average pages for {k}: {total/100}\n')
+        print(f'Average pages is {total/100}')
+
 def test_long_beach():
     root = RTree(2)
     lst = pickle.load(open('LB.dump', 'rb'))
@@ -592,7 +623,7 @@ def test_long_beach():
 
 def test_synthetics():
     open("rtree_synthetic_2d.txt", 'w')
-    # for amount in [64000]: 
+    # for amount in [1000]: 
     for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
         lst = pickle.load(open(f'synthetic_{amount}.dump', 'rb'))
         root = RTree(2)
@@ -618,12 +649,15 @@ def test_synthetics():
 
         KNN_random_points = pickle.load(open(f'synthetic_qpoints_{amount}.dump', 'rb'))
         count = 0
-        # for K in [100]:
-        for K in [1, 5, 10, 50, 100, 500]:
+        timer = []
+        for K in [50]:
+        # for K in [1, 5, 10, 50, 100, 500]:
             pages = 0
             print(f'K: {K} Current Pages: {pages}')
             for point in KNN_random_points:
+                a = time.time()
                 neighbours, p = root.root.KNN(point, [], K)
+                timer.append(time.time() - a)
                 neighbours = np.asarray(neighbours)
                 pages += p
                 actual = np.asarray([np.asarray((distance(point, i, 2), i[0], i[1])) for i in lst])
@@ -642,7 +676,7 @@ def test_synthetics():
                 print(f'Pages {p}')
                 count += 1
             with open("rtree_synthetic_2d.txt", 'a') as output:
-                output.write(f"Average pages for {K} on synthetic points {amount}: {pages/100}.\n")
+                output.write(f"Average pages for {K} on synthetic points {amount}: {pages/100}.\nTime is {sum(timer)/100}\n")
             print(f"Average pages for {K}: {pages/100}")
 
 
@@ -855,9 +889,10 @@ if __name__ == '__main__':
     #     pdb.set_trace()
     #     root.insert(lst[i])
     # test_synthetics()
+    test_images()
     # test_1000()
     # test_3d()
-    test_nd()
+    # test_nd()
     # test_long_beach()
     # pdb.set_trace()
     # root = RTree()

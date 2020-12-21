@@ -111,13 +111,15 @@ class Shard:
 class Cell:
     def __init__(self, min_map, bounding_rectangle):
         """
-        Creates a cell with the mapping range it contains. More specifically, this describes the cell with all mappingings [min_map, min_map + 1)
+        Creates a cell with the mapping range it contains. More specifically, this describes the cell with all mapping [min_map, min_map + 1)
 
         Creates a bounding_rectangle around it. This bounding rectangle is a [dimension x 2] array
         """
         self.mapping = min_map
         self.bounding_rectangle = np.asarray(bounding_rectangle)
         self.shards = set()
+        self.data = []
+        self.centroid = []
     
     def add_shard(self, shard):
         """
@@ -126,3 +128,12 @@ class Cell:
         shard is a 2 length tuple. The first element is an index, and the second element is the shard_id.
         """
         self.shards.add(shard)
+
+    def add_data(self, point):
+        """
+        Add a point to the Cell.
+        """
+        self.data.append(point)
+    
+    def add_centroid(self, centroid):
+        self.centroid = centroid

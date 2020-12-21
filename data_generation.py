@@ -7,6 +7,7 @@ from matplotlib.patches import Rectangle
 import heapq
 import math
 import pickle
+import pdb
 
 def rebalance(dest, src, dest_center, src_center, m, dimension):
     """
@@ -70,6 +71,33 @@ def cluster(lst, M):
         lst2, lst1 = rebalance(lst2, lst1, centers[1], centers[0], M//2, dimension)
     return (lst1, lst2, kmeans)
 
+def run_k_means(lst, K):
+    """
+    Take a array of dimension points and run K-means clustering on it. Creates K clusters
+
+    Returns a dictionary of K lists of points that are clustered according to K-means and the clusters.
+    Note that the list of points at index i has center at centers[i]
+    """
+    dimension = lst.shape[1]
+    kmeans = KMeans(n_clusters = K, random_state = 0).fit(lst)
+    centers = kmeans.cluster_centers_
+    
+    # Using the centers, we assign each point to the closest center.
+    result = {}
+    for i in lst:
+        index = kmeans.predict(i.reshape((1, dimension)))[0]
+
+        if index in result:
+            result[index].append(i)
+        else:
+            result[index] = [i]
+
+    for res in result:
+        result[res] = np.asarray(result[res])
+
+    return result
+
+
 def distance(p1, p2, dimension):
     """
     Returns the distance between two points.
@@ -81,11 +109,55 @@ def distance(p1, p2, dimension):
         ans += (p1[i] - p2[i]) ** 2
     return math.sqrt(ans)
 
+def unpickle(file):
+    """load the cifar-10 data"""
+
+    with open(file, 'rb') as fo:
+        data = pickle.load(fo, encoding='bytes')
+    return data
+
+def create_image_6d(file_name, output):
+    pdb.set_trace()
+    full_data = set()
+
+    first = [(x,y) for x in (4, 12) for y in (4,12)]
+    second = [(x,y) for x in (20, 28) for y in (20, 28)]
+    for i in range(1):
+        data = unpickle(f'cifar-100-python/train')[b'data']
+
+        pdb.set_trace()
+        print(data)
+
+        for i in data:
+            red = i[0:1024].reshape(32, 32)
+            green = i[1024: 2048].reshape(32, 32)
+            blue = i[2048:].reshape(32, 32)
+
+            a,b,c,d = first
+            full_data.add(tuple([i[a] for i in [red, green, blue]] + [i[b] for i in [red, green, blue]]))
+            full_data.add(tuple([i[c] for i in [red, green, blue]] + [i[d] for i in [red, green, blue]]))
+            print([i[a] for i in [red, green, blue]] + [i[b] for i in [red, green, blue]])
+
+            
+            a,b,c,d = second
+            full_data.add(tuple([i[a] for i in [red, green, blue]] + [i[b] for i in [red, green, blue]]))
+            full_data.add(tuple([i[c] for i in [red, green, blue]] + [i[d] for i in [red, green, blue]]))
+            print([i[a] for i in [red, green, blue]] + [i[b] for i in [red, green, blue]])
+
+        pdb.set_trace()
+    full_data = list(full_data)
+
+    full_data = np.asarray(full_data)
+    pickle.dump(full_data, open(f'{output}', 'wb'))
+    
+
+    print(full_data.shape)
+
+
 
 if __name__ == '__main__':
-    for dimension in [3, 4, 5, 6]:
-        for i in [1000, 4000, 8000, 16000, 32000, 64000]:
-            lst = generate_numbers(0, 8000, i, dimension)
-            pickle.dump(lst, open(f"synthetic_{i}_{dimension}d.dump", "wb"))
+    create_image_6d('CIFAR-10-batch-1', '6d_cifar_100')
+    # a = generate_numbers(0, 255, 100, 6)
+    # pickle.dump(a, open('qpoints_images.dump', 'wb'))
 
     

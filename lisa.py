@@ -1,13 +1,16 @@
 import numpy as np
 import math
-from data_generation import generate_numbers
+from data_generation import generate_numbers, run_k_means
 from shard_implementation import Shard, Shard_index, Cell
-from rtree import min_max_dist, min_dist, prune
+from rtree import min_max_dist, min_dist, prune, bounding_rectangle
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+from functools import reduce, cmp_to_key
+import kd_tree as kd
 import pdb
 import pickle
 import time
+import operator
 """
 Quick Reminders:
 Theta = Border points generated along every axis
@@ -85,7 +88,8 @@ def train(partitions, sigma, psi):
         try:
             alpha, A = calculate_alpha(partition, beta, y)
         except:
-            # alpha, A = calculate_alpha(partition, beta,y )
+            pdb.set_trace()
+            alpha, A = calculate_alpha(partition, beta,y )
             pass
         curr_loss = calculate_loss(A, alpha, y)
         orig_loss = curr_loss
@@ -219,7 +223,21 @@ def binary_search(element, array, beginning, end):
         else:
             return binary_search(element, array, beginning, mid)
 
-# TODO: Change
+def mapping_list_partition_cells(cells, k):
+    """
+    Returns a k x F array where F is approximately len(lst)/k equal partition of the list of points
+    Also returns the original point list with an attached mapping to them, sorted by mapping
+
+    lst is a N x dimension list of points
+    cells is a list of cells that partition the entire dataset
+    k an integer representing the number of partitions we should break up the original list into
+    """
+    parts_with_mapping = mapping_function_cells(cells)
+
+    parts = np.array_split(parts_with_mapping[:, 0], k)
+    pdb.set_trace()
+    return parts, parts_with_mapping
+
 def mapping_list_partition(lst, Theta, T_i, k):
     """
     Returns a k x F, where F is approximately len(lst)/k equal partition of the list of points.
@@ -254,6 +272,30 @@ def cell_index(point, Theta, T_i):
         count = count * T_i[i] + inds[i]
 
     return count
+
+def mapping_function_cells(cells):
+    """
+    Returns the mapping value for all the points inside all the cells.
+
+    Cells is a list of cells
+    """
+    lst = []
+    pdb.set_trace()
+    for cell in cells:
+        index = cell.mapping
+        mins, maxs = cell.bounding_rectangle
+        dimension = mins.shape[0]
+        C_i = 1
+        for i in range(dimension):
+            C_i *= maxs[i] - mins[i]
+        for point in cell.data:
+            H_i = 1
+            for i in range(dimension):
+                H_i *= point[i] - mins[i]
+            p = list(point)
+            lst.append(np.asarray((index + (H_i/C_i), *p)))
+    return np.asarray(lst)
+
 
 def mapping_function_with_index(ind, point_lower, point, Theta, T_i):
     """
@@ -308,6 +350,15 @@ def calculate_border_points(axis, T_i, maximum):
     
     return res
 
+def calculate_centroid(rectangle):
+    """
+    Calculate the centroid of a rectangle given its top and bottom corners.
+    """
+    dimension = rectangle.shape[1]
+    bottom = rectangle[0]
+    top = rectangle[1]
+
+
 def create_cells(data, T_i):
     """
     T_i is a N-d array, where T_i[j] is the partition amount for dimension j.
@@ -328,6 +379,8 @@ def create_cells(data, T_i):
         axis = data[:, i]
         axis = np.sort(axis)
         res[i] = calculate_border_points(axis, T_i[i], maximum)
+        # Avoid index out of range when calculating all dimensions == the maximum value for mapping value.
+        res[i][-1] += 0.01
 
     return res
 
@@ -343,6 +396,7 @@ def create_shards(params, full_lst, psi, cells=None):
 
     Returns a list of shards. shards[i] corresponds to the shard prediction function for learned function F_i
     """
+    pdb.set_trace()
     shards = []
     D = np.ceil(len(params[0][-1])/psi)
     count = 0
@@ -361,6 +415,7 @@ def create_shards(params, full_lst, psi, cells=None):
             shard_ind.append(position, points[count])
             curr_mapping = points[count][0]
             curr_mapping = int(np.floor(curr_mapping))
+            print(curr_mapping)
             cells[curr_mapping].add_shard((i, position))
             count += 1
         shard_ind.calculate()
@@ -617,6 +672,20 @@ def find_points(points, params, shards, M, T_i, psi, Theta):
 
     return answer, pages, page_set
 
+def visualize_cells(lst, cells, psi):
+    x = lst[:, 0]
+    y = lst[:, 1]
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.scatter(x,y, color='white')
+
+    for cell in cells:
+        bottom, top = cell.bounding_rectangle
+        ax.add_patch(Rectangle(xy =(bottom[0], bottom[1]), width= top[0] - bottom[0], height = top[1] - bottom[1], fill=False, color='purple'))
+        ax.annotate(f'{cell.mapping}', top)
+    plt.show()
+
+
 def visualize(Theta, lst, T_i, params, psi, M, cells):
     x = np.take(lst, 0, 1)
     y = np.take(lst, 1, 1)
@@ -696,32 +765,30 @@ def find_nearest(results, point, nearest, k):
     return nearest
 
 # TODO: Change
-def KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells):
+def KNN_updated(k, point, params, shards, psi, cells):
     """
     Finds the K nearest neighbours to a given point.
 
     Uses the MINDIST/MINMAXDIST ordering to prune the search set.
     """
     # Generate cells to visit by mindist/minmaxdist.
-    # timer = []
-    # timer1 = []
-    # timer2 = []
-    # timer3 = []
+    timer = []
+    timer1 = []
+    timer2 = []
+    timer3 = []
     nearest = []
+    iters = 0
     pages = 0
     branches = []
     page_set = set()
     shard_set = set()
 
-    # d = time.time()
     for i in cells:
         # Force prune to never happen based off of minmaxdist
         # Set min_max_dist to infinity because cells aren't MBRs.
         branches.append((float('inf'), min_dist(point, i.bounding_rectangle), i))
     branches = sort_branches(branches, True)
     branches = prune(branches, nearest, k)
-    # timer3.append(time.time() - d)
-    # a = time.time()
 
     while len(branches) > 0:
         cell = branches.pop(0)[-1]
@@ -743,18 +810,31 @@ def KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells):
 
             # Get all the bounding rectangles associated with this shard. Only "visit" based on the closest min_dist to the point.
 
-      #      b = time.time()
+            b = time.time()
             entries = np.asarray([(min_max_dist(point, br.rectangle), min_dist(point, br.rectangle), ind, br, shard) for br in shard.get_bounding_rectangles()])
             to_visit.extend(entries[np.argsort(entries[:,1])])
-       #     timer1.append(time.time() - b)
+            timer1.append(time.time() - b)
 
         # pdb.set_trace()
         to_visit = sort_branches(to_visit)
+        if len(to_visit) == 0:
+            continue
 
+        d = time.time()
         # Do downwards pruning
         to_visit = prune(to_visit, nearest, k)
+        timer3.append(time.time() - d)
         
-        #a = time.time()
+        
+        a = time.time()
+        # Prune only when nearest changes.
+        curr_max_nearest = None
+        new_nearest = float('inf')
+        if len(nearest) != k:
+            curr_max_nearest = 0
+        else:
+            curr_max_nearest = max([i[0] for i in nearest])
+        
         while len(to_visit) > 0:
             #TODO: DO NOT JUST LOOK FOR THE BOUNDING RECTANGLE
             # This bounding rectangle can overlap many different shards, resulting in additional accesses.
@@ -774,20 +854,28 @@ def KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells):
                     results.extend(shard.get_page(i[-1], psi))
             page_set.update(ps)
 
-
             nearest = find_nearest(results, point, nearest, k)
 
             # Do pruning amongst the shard set
             to_visit = prune(to_visit, nearest, k)
-        #timer.append(time.time() - a)
+        new_nearest = float('inf')
+        if len(nearest) != k:
+            new_nearest = float('inf')
+        else:
+            new_nearest = max([i[0] for i in nearest])
+        timer.append(time.time() - a)
         
-        #c = time.time()
-        branches = prune(branches, nearest, k) # Prune the branches based off of increasing nearest.
-        #timer2.append(time.time()- c)
-    #print(f"Took {sum(timer)} seconds to visiting")
-    #print(f'Took {sum(timer1)} generating the shard_list')
-    #print(f'Took {sum(timer2)} pruning branches')
-    #print(f'Took {sum(timer3)} generating and sorting the branches')
+        c = time.time()
+        # Only prune if nearest changes, or max_nearest has changed
+        if len(nearest) == k and new_nearest < curr_max_nearest:
+            branches = prune(branches, nearest, k) # Prune the branches based off of increasing nearest.
+            iters += 1
+        timer2.append(time.time()- c)
+    print(f"Took {iters} pruning")
+    print(f"Took {sum(timer)} seconds visiting")
+    print(f'Took {sum(timer1)} generating the shard_list')
+    print(f'Took {sum(timer2)} pruning branches')
+    print(f'Took {sum(timer3)} pruning and sorting to_visit')
     return nearest, len(page_set)
 
 def KNN(k, delta, point, Theta, params, shards, M, T_i, psi):
@@ -804,29 +892,41 @@ def KNN(k, delta, point, Theta, params, shards, M, T_i, psi):
     T_i: The length of Theta for each dimension
     psi: How many points are in a shard.
     """
-    x_p, y_p = point
-    bottom_left = np.asarray((x_p - delta, y_p - delta))
-    top_right = np.asarray((x_p + delta, y_p + delta))
+    results = []
+    page_set = set()
+    while True:
+        # Craft the rectangle
+        dimension = Theta.shape[0]
+        bottom_left = np.zeros(dimension)
+        top_right = np.zeros(dimension)
+        for i in range(dimension):
+            bottom_left[i] = point[i] - delta
+            top_right[i] = point[i] + delta
 
-    # Decompose the rectangle, then get the results based on the range query.
-    q_rectangles = decompose_query(Theta, bottom_left, top_right)
-    results, p, page_set = find_points(q_rectangles, params, shards, M, T_i, psi, Theta)
-    # print(f"Looked at {p} pages")
+        # Decompose the rectangle, then get the results based on the range query.
+        q_rectangles = decompose_query(Theta, bottom_left, top_right)
+        _, _, ps = find_points(q_rectangles, params, shards, M, T_i, psi, Theta)
+        if page_set != ps:
+            results = []
+            for i in ps:
+                results.extend(shards[i[0]].get(i[1]).get_page(i[-1], psi))
+            page_set = ps
 
-    found_points = {point[1:] for point in results if in_query(point[1:], (bottom_left, top_right))}
-    answer = []
-    for i in found_points:
-        answer.append((distance(i, point), i[0], i[1]))
-    if len(answer) == 0:
-        return np.asarray(answer), len(page_set)
-    answer = np.asarray(answer)
-    answer = answer[np.argsort(answer[:,0])]
-    if answer.shape[0] < k:
-        return answer, len(page_set)
-    else:
-        answer = np.asarray(answer)[:k] # Take the first k elements.
-    
-    return np.asarray(answer), len(page_set)
+        found_points = [res[1:] for res in results if math.sqrt(distance(point, res[1:])) <= delta]
+        answer = []
+        for i in found_points:
+            answer.append((distance(i, point), i[0], i[1]))
+        if len(answer) == 0:
+            delta += 1
+            continue
+        answer = np.asarray(answer)
+        answer = answer[np.argsort(answer[:,0])]
+        if answer.shape[0] < k:
+            delta += 1
+            continue
+        else:
+            answer = np.asarray(answer)[:k] # Take the first k elements.
+            return answer, page_set
 
 def distance(point1, point2):
     """
@@ -841,6 +941,74 @@ def distance(point1, point2):
         total += (point1[i] - point2[i])**2
 
     return total
+
+def mergeSort(arr):
+    if len(arr) > 1:
+ 
+         # Finding the mid of the array
+        mid = len(arr)//2
+ 
+        # Dividing the array elements
+        L = arr[:mid]
+ 
+        # into 2 halves
+        R = arr[mid:]
+ 
+        # Sorting the first half
+        mergeSort(L)
+ 
+        # Sorting the second half
+        mergeSort(R)
+ 
+        i = j = k = 0
+ 
+        # Copy data to temp arrays L[] and R[]
+        while i < len(L) and j < len(R):
+            if compare_bounding_rectangles(L[i], R[j]) < 0:
+                arr[k] = L[i]
+                i += 1
+            else:
+                arr[k] = R[j]
+                j += 1
+            k += 1
+ 
+        # Checking if any element was left
+        while i < len(L):
+            arr[k] = L[i]
+            i += 1
+            k += 1
+ 
+        while j < len(R):
+            arr[k] = R[j]
+            j += 1
+            k += 1
+
+def compare_bounding_rectangles(rect1, rect2):
+    """
+    Compares two bounding rectangles.
+
+    rect1 is greater than rect2 if the maximum corner of rect1 is greater than the minimum corner rect2
+    IE if rect1's top_right = (x1, x2, ... , xn) and rect2's minimum corner is (y1, y2, ..., yn) then
+    rect2 > rect1
+
+    rect1 is a 2 x n tuple. This is a python tuple and not a numpy array
+    rect2 is a 2 x n tuple. This is a python tuple and not a numpy array
+
+    The rectangle tuple is of form (minimum_corner, maximum_corner)
+    """
+    dimension = len(rect1[0])
+
+    # Make sure they are the same dimension
+    assert len(rect1[0]) == len(rect2[0])
+
+    # Compare the rectangles
+    maximum = np.asarray(rect1[1])
+    minimum = np.asarray(rect2[0])
+
+    if (maximum > minimum).all():
+        return 1
+    else:
+        return -1
 
 def generate_qrects(mins, maxs):
     """
@@ -867,7 +1035,7 @@ def generate_qrects(mins, maxs):
     return k
 
 def test_synthetics():
-    open("lisa_synthetic.txt", 'w')
+    open("lisa_synthetic_time.txt", 'w')
     for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
         lst = pickle.load(open(f'synthetic_{amount}.dump', 'rb'))
         T_i = [100, 100]
@@ -927,12 +1095,16 @@ def test_synthetics():
         # KNN_random_points = generate_numbers(0, 8000, 100)
         # # pickle.dump(KNN_random_points, open(f"synthetic_qpoints_{amount}.dump", "wb"))
         KNN_random_points = pickle.load(open(f"synthetic_qpoints_{amount}.dump", "rb"))
-
-        for K in [1, 5, 10, 50, 100, 500]:
+        timer = []
+        
+        for K in [50]:
+        # for K in [1, 5, 10, 50, 100, 500]:
             pages = 0
             print(f'K: {pages}')
             for point in KNN_random_points:
-                nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+                a = time.time()
+                nearest, p = KNN_updated(K, point, params, shards, psi, cells)
+                timer.append(time.time() - a)
                 nearest = np.asarray(nearest)
                 nearest = nearest[np.argsort(nearest[:, 0])]
                 pages += p
@@ -946,17 +1118,46 @@ def test_synthetics():
                 print(f"Point: {point}")
                 print(f"Neighbours: {np.asarray(nearest)}")
                 print(f"Pages: {p}")
-            with open("lisa_synthetic.txt", 'a') as output:
-                output.write(f"Average pages for {K} on synthetic points {amount}: {pages/100}.\n")
+            with open("lisa_synthetic_time.txt", 'a') as output:
+                output.write(f"Average pages for {K} on synthetic points {amount}: {pages/100}.\nAverage time: {sum(timer)/100}\n")
             print(f"Average pages for {K}: {pages/100}")
+
+        # for K in [50]:
+        #     pages = 0
+        #     count = 0
+        #     timer = []
+
+        #     for point in KNN_random_points:
+        #     # for point in [KNN_random_points[9]]:
+        #         print(K)
+        #         count += 1
+        #         a = time.time()
+        #         ans, k_pages = KNN(K, 1, point, Theta, params, shards, M, T_i, psi)
+        #         timer.append(time.time() - a)
+        #         pages += len(k_pages)
+        #         actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+        #         actual = actual[np.argsort(actual[:,0])][:K]
+        #         if not (actual[:, 1:] == np.asarray(ans)[:, 1:]).all():
+        #             print(actual)
+        #             print(ans)
+        #             pdb.set_trace()
+        #             KNN(K, 1, point, Theta, params, shards, M, T_i, psi)
+        #             raise Exception(amount, count)
+        #             print(f"Neighbours: {np.asarray(ans)}")
+
+        #         print(f"Point: {point}")
+        #         print(f"Neighbours: {np.asarray(ans)}")
+        #     print(f"Average pages: {pages/100}")
+        #     with open("lisa_synthetic.txt", 'a') as output:
+        #         output.write(f'Average pages for {K} on synthetic points {amount} using delta: {pages/100}\n. Average time is {sum(timer)/100}.\n')
 
 def test_nd():
     open('lisa_synthetic_nd.txt', 'w')
     values = {3: [10, 10, 10], 4:[ 8, 8, 8, 8], 5: [7, 7, 7, 7, 7], 6: [6, 6, 6, 6, 6, 6]}
-    for dimension in [6]:
-#    for dimension in [3, 4, 5, 6]:
-        for amount in [64000]:
-        # for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
+    # for dimension in [6]:
+    for dimension in [3, 4, 5, 6]:
+        # for amount in [16000]:
+        for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
             lst = pickle.load(open(f'synthetic_{amount}_{dimension}d.dump', 'rb'))
             T_i = values[dimension]
             Theta = create_cells(lst, T_i)
@@ -983,19 +1184,20 @@ def test_nd():
                 output.write(f"Dimension {dimension}\n")
 
             q_points = pickle.load(open(f'synthetic_qpoints_{dimension}d.dump', 'rb'))
-            for K in [500]:
-            # for K in [1, 5, 10, 50, 100, 500]:
+            # for K in [500]:
+            for K in [1, 5, 10, 50, 100, 500]:
                 pages = 0
-                for point in [q_points[0]]:
-#                for point in q_points:
+                # for point in [q_points[0]]:
+                for point in q_points:
                     a = time.time()
-                    nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+                    nearest, p = KNN_updated(K, point, Theta, params, shards, M, psi, cells)
                     print(f'Took {time.time() - a} seconds to KNN')
                     nearest = np.asarray(nearest)
                     nearest = nearest[np.argsort(nearest[:, 0])]
                     pages += p
                     actual = np.asarray([np.asarray((distance(point, i), *i)) for i in lst])
                     actual = actual[np.argsort(actual[:,0])][:K]
+                    
                     if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
                         print(actual)
                         print(nearest)
@@ -1005,15 +1207,16 @@ def test_nd():
                     print(f"Pages: {p}")
                 with open("lisa_synthetic_nd.txt", 'a') as output:
                     output.write(f"Average pages for {K} on synthetic points {amount} for dimension {dimension}D: {pages/100}.\n")
+                
                 print(f"Average pages for {K}: {pages/100}")
                 
 
 
 def test_3d():
     # Generate a 100 3d points.
-    # lst = generate_numbers(0, 100, 100, 3)
+    lst = generate_numbers(0, 100, 100, 3)
     # pickle.dump(lst, open("3d_lisa.dump", "wb"))
-    lst = pickle.load(open('3d_lisa.dump', 'rb'))
+    # lst = pickle.load(open('3d_lisa.dump', 'rb'))
     dimension = 3
     T_i = [4, 4, 4]
     Theta = create_cells(lst, T_i)
@@ -1029,6 +1232,7 @@ def test_3d():
     
     # Get the bounding rectangles.
     # Send in all the minimum values of all Thetas, and the maximum values of all Thetas as bottom_left and top_right respectively
+    pdb.set_trace()
     bounding_rectangles = decompose_query(Theta, Theta[:, 0], Theta[:, -1])
     cells = []
     for i in range(len(bounding_rectangles)):
@@ -1082,7 +1286,7 @@ def test_3d():
     pages = 0
     q_points = generate_numbers(0, 100, 100, 3)
     for point in q_points:
-        nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+        nearest, p = KNN_updated(K, point, Theta, params, shards, M, psi, cells)
         pages += p
         print(f'Pages {p}\nNeighbours: {nearest}')
         actual = np.asarray([np.asarray((distance(point, i), *i)) for i in lst])
@@ -1097,123 +1301,201 @@ def test_3d():
     
 def test_1000():
     lst = pickle.load(open('data_1000.dump', 'rb'))
+    # lst = generate_numbers(0, 100, 1000, 3)
+    psi = 50
     T_i = [5,5]
-    Theta = create_cells(lst, T_i)
+    dimension = 2
+    mins, maxs, data = kd.get_leaves(lst, 15) # Should have a total of 32 leaves
+
+    # distances = [np.sqrt(distance(i, [0] * dimension)) for i in maxs]
+    # sorted_indices = np.argsort(distances)
+    # pdb.set_trace()
+
+    # mins = mins[sorted_indices]
+    # maxs = maxs[sorted_indices]
+    # data = [data[i] for i in sorted_indices]
+
+    bounding_rects = []
+    indices = {}
+    cells = []
+
+    for i in range(len(mins)):
+        rect = (tuple(mins[i]), (tuple(maxs[i])))
+        bounding_rects.append(rect)
+        indices[rect] = i
+
     pdb.set_trace()
 
-    partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 3) # Create 10 equal length partitions of the mapping space.
+    # Sort based off of monotonicity condition.
+    pdb.set_trace()
+    bounding_rects_sorted = bounding_rects.copy()
+    mergeSort(bounding_rects_sorted)
+    # bounding_rects_sorted = sorted(bounding_rects, key=cmp_to_key(compare_bounding_rectangles))
+    k = np.asarray([indices[i] for i in bounding_rects_sorted])
 
-    M = [partitions[0][0]]
-    for i in partitions:
-        M.append(i.max())
+    mins = mins[k]
+    maxs = maxs[k]
+    data = [data[i] for i in k]
+    
+    # Create the cells
+    for i in range(len(mins)):
+        cell = Cell(i, (mins[i], maxs[i]))
+        for j in data[i]:
+            cell.add_data(j)
+        cells.append(cell)
+        print(f'Cell: {i}, data: {len(cell.data)}')
+
+    # Check cells:
+    for i in range(len(mins)-1, -1, -1):
+        br1 = cells[i].bounding_rectangle
+        for j in range(i-1,-1, -1):
+            br2 = cells[j].bounding_rectangle
+            if (br1[0] < br2[1]).all():
+                print(i, j)
+                # raise Exception(f'cell {i} is greater than cell {j}')
+
+    partitions, full_lst = mapping_list_partition_cells(cells, 3)
+    print(bounding_rects)
+
+    # visualize_cells(lst, cells, psi)
+
     psi = 50
     params = train(partitions, 3, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
-    bounding_rectangles = decompose_query(Theta, np.asarray((Theta[0][0], Theta[1][0])), np.asarray((Theta[0][-1], Theta[1][-1])))
-    cells = []
-    for i in range(len(bounding_rectangles)):
-        cells.append(Cell(i, bounding_rectangles[i]))
 
     shards = create_shards(params, full_lst, psi, cells)
     for i in cells:
         print(i.mapping, i.shards)
 
-    pdb.set_trace()
+    
+    # visualize(Theta, lst, T_i,params, psi, M, cells )
+    # pdb.set_trace()
     for shard_ind in shards:
         for shard_id in shard_ind.get_keys():
             shard = shard_ind.get(shard_id)
-            print(shard.lower_mapping, shard.upper_mapping, len(shard.bounding_rectangles), (shard_ind.get_id(), shard.id))
-
-    min_x = np.min(lst[:,0])
-    min_y = np.min(lst[:,1])
-    max_x, max_y = np.max(lst[:,0]), np.max(lst[:,1])
-    pdb.set_trace()
-    # q_rects = generate_qrects(min_x, min_y, max_x, max_y)
-    # pickle.dump(q_rects, open("query_rectangles_long_beach.dump", 'wb'))
+            print(shard.lower_mapping, shard.upper_mapping, len(shard.bounding_rectangles), (shard_ind.get_id(), shard.id), len(shard.get_data()))
     
-    
-    q_rects = pickle.load(open("query_rectangles_100_100x100.dump", "rb"))
-    total_p = 0
-    count = 0
-    for i in q_rects:
-        points = decompose_query(Theta, i[0], i[1])
-        return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
-        final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
-        total_p += len(page_set)
-        print(f"Results: {len(final_results)}")
-        print(len(page_set))
-        count += 1
-    print(f"Average page lookup {total_p/100}.")
-
-    # visualize(Theta, lst, T_i,params, psi, M, cells )
-    
-    KNN_random_points = pickle.load(open('qpoints_100.dump', 'rb'))
-    point = KNN_random_points[-2]
+    KNN_random_points = generate_numbers(0, 100, 100, 2)
+    K = 100
     pages = 0
-    k = 10
-    pdb.set_trace()
-    nearest, p = KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells)
-
+    amount = 0
     for point in KNN_random_points:
-        nearest, p = KNN_updated(k, point, Theta, params, shards, M, T_i, psi, cells)
+        nearest, p = KNN_updated(K, point, params, shards, psi, cells)
+        nearest = np.asarray(nearest)
+        nearest = nearest[np.argsort(nearest[:, 0])]
         pages += p
+        actual = np.asarray([np.asarray((distance(point, i), *i)) for i in lst])
+        actual = actual[np.argsort(actual[:,0])][:K]
+        amount += 1
+        
+        if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+            print(actual)
+            print(nearest)
+            raise Exception(amount, K)
         print(f"Point: {point}")
         print(f"Neighbours: {np.asarray(nearest)}")
         print(f"Pages: {p}")
-    print(f"Average pages: {pages/100}")
+    
+    print(f"Average pages for {K}: {pages/100}")
 
-    # KNN TESTING!
-    # num_rand_points = 10
-
-
-    # KNN_random_points = generate_numbers(0,100, 10) # Grab randomly, 10 elements.
-    # average_dist = 0
-    # average_pages = 0
-    # K = 3
-    # print("TRAINING")
-    # for p in KNN_random_points:
-    #     delta = 1
-    #     pages = 0
-    #     while(True):
-    #         ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi) # KNN with 3 neighbours.
-    #         print(pages)
-    #         pages += k_pages
-    #         if ans.shape[0] < K:
-    #             delta += 1
-    #         else:
-    #             max_dist = np.max(ans[:,0])
-    #             average_pages += pages
-    #             average_dist += max_dist
-    #             print(f"Point {p}")
-    #             print(f'Neighbours {ans}\nPages: {pages}')
-    #             break
-    # average_dist = average_dist/10
-    # average_pages = average_pages/10
-    # 
-    # print(average_dist)
-    # average_pages = 0
-
-    # # Real query time.
-    # print("TESTING")
-    # KNN_random_points = pickle.load(open('qpoints_100.dump', 'rb'))
+    # min_x = np.min(lst[:,0])
+    # min_y = np.min(lst[:,1])
+    # max_x, max_y = np.max(lst[:,0]), np.max(lst[:,1])
     # pdb.set_trace()
-    # delta = average_dist
-    # for p in KNN_random_points:
-    #     delta = average_dist
-    #     pages = 0
-    #     while True:
-    #         ans, k_pages = KNN(K, delta, p, Theta, params, shards, M, T_i, psi)
-    #         if ans.shape[0] < K:
-    #             mult_factor = 2
-    #             if ans.shape[0] > 0:
-    #                 mult_factor = math.sqrt(K/ans.shape[0])
-    #             delta = delta * mult_factor
-    #         else:
-    #             average_pages += k_pages
+    # # q_rects = generate_qrects(min_x, min_y, max_x, max_y)
+    # # pickle.dump(q_rects, open("query_rectangles_long_beach.dump", 'wb'))
+    # 
+    # 
+    # q_rects = pickle.load(open("query_rectangles_100_100x100.dump", "rb"))
+    # total_p = 0
+    # count = 0
+    # for i in q_rects:
+    #     points = decompose_query(Theta, i[0], i[1])
+    #     return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
+    #     final_results = {tuple(point[1:]) for point in return_results if in_query(point[1:], i)} # Remove mapping from the points.
+    #     total_p += len(page_set)
+    #     print(f"Results: {len(final_results)}")
+    #     print(len(page_set))
+    #     count += 1
+    # print(f"Average page lookup {total_p/100}.")
 
-    #             print(f"Point {p}")
-    #             print(f'Neighbours {ans}\nPages: {pages}')
-    #             break
-    # print(average_pages/100)
+    # 
+    # KNN_random_points = pickle.load(open('qpoints_100.dump', 'rb'))
+    # point = KNN_random_points[-2]
+    # pages = 0
+    # k = 10
+    # pdb.set_trace()
+    # nearest, p = KNN_updated(k, point, Theta, params, shards, M, psi, cells)
+
+    # for point in KNN_random_points:
+    #     nearest, p = KNN_updated(k, point, Theta, params, shards, M, psi, cells)
+    #     pages += p
+    #     print(f"Point: {point}")
+    #     print(f"Neighbours: {np.asarray(nearest)}")
+    #     print(f"Pages: {p}")
+    # print(f"Average pages: {pages/100}")
+
+def test_images():
+    lst = pickle.load(open('6d_cifar_100', 'rb'))
+    T_i = [6, 6, 6, 6, 6, 6]
+    # params, shards, M, T_i, psi, Theta, cells = pickle.load(open('lisa_images_10bp_Ti4.obj', 'rb'))
+    # params, shards, M, T_i, psi, Theta, cells = pickle.load(open('lisa_images_cifar_100.obj', 'rb'))
+    pdb.set_trace()
+    Theta = create_cells(lst, T_i)
+
+    partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 10)
+    # print([len(shards[0].get(i).data) for i in shards[0].get_keys()])
+    pdb.set_trace()
+
+    M = [partitions[0][0]]
+    for i in partitions:
+       M.append(i.max())
+    psi = 50
+    pdb.set_trace()
+    params = train(partitions, 10, psi)
+
+    bounding_rectangles = decompose_query(Theta, Theta[:, 0], Theta[:, -1])
+    cells = []
+    for i in range(len(bounding_rectangles)):
+        cells.append(Cell(i, bounding_rectangles[i]))
+
+    shards = create_shards(params, full_lst, psi, cells)
+    #pickle.dump([params, shards, M, T_i, psi, Theta, cells], open('lisa_images_10bp.obj', 'wb'))
+    #pickle.dump([params, shards, M, T_i, psi, Theta, cells], open('lisa_images_10bp_Ti6.obj', 'wb'))
+    pickle.dump([params, shards, M, T_i, psi, Theta, cells], open('lisa_images_cifar_100.obj', 'wb'))
+    pdb.set_trace()
+    q_points = pickle.load(open('qpoints_images.dump', 'rb'))
+    open("lisa_images_cifar_100_results.txt", 'wb')
+    for K in [1, 5, 10, 50, 100, 500]:
+        pages = 0
+        timer = 0
+        amount = 0
+        dimension = 6
+        # for point in [q_points[2]]:
+        #    pdb.set_trace()
+        for point in q_points:
+            a = time.time()
+            nearest, p = KNN_updated(K, point, Theta, params, shards, M, psi, cells)
+            timer += time.time() - a
+            print(f'Took {time.time() - a} seconds to KNN')
+            nearest = np.asarray(nearest)
+            nearest = nearest[np.argsort(nearest[:, 0])]
+            pages += p
+            actual = np.asarray([np.asarray((distance(point, i), *i)) for i in lst])
+            actual = actual[np.argsort(actual[:,0])][:K]
+            amount += 1
+            
+            if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+                print(actual)
+                print(nearest)
+                raise Exception(amount, K)
+            print(f"Point: {point}")
+            print(f"Neighbours: {np.asarray(nearest)}")
+            print(f"Pages: {p}")
+        with open("lisa_images_cifar_100_results.txt", 'a') as output:
+            output.write(f"Average pages for {K} on synthetic points {amount} for dimension {dimension}D: {pages/100}.\nTook {timer/100} seconds.\n")
+        
+        print(f"Average pages for {K}: {pages/100}")
+
 
 def test_long_beach():
     lst = pickle.load(open('LB.dump', 'rb'))
@@ -1306,7 +1588,7 @@ def test_long_beach():
     for K in [1, 5, 10, 50, 100, 500]:
         pages = 0
         for point in KNN_random_points:
-            nearest, p = KNN_updated(K, point, Theta, params, shards, M, T_i, psi, cells)
+            nearest, p = KNN_updated(K, point, Theta, params, shards, M, psi, cells)
             pages += p
             actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
             actual = actual[np.argsort(actual[:,0])][:K]
@@ -1322,6 +1604,8 @@ def test_long_beach():
                 print(nearest)
                 out.write("BIG OOF at {amount} {K}")
         print(f"Average pages: {pages/100}")
+
+
 
     # Real query time.
     # print("TESTING")
@@ -1354,10 +1638,253 @@ def test_long_beach():
     # print(average_pages/100)
     # visualize(Theta, lst, T_i,params, psi, M )
 
-if __name__ == "__main__":
+class kd_tree_implementation:
+    '''
+    Use the kd_tree to generate bounding boxes.
+    '''
+    def test_1000():
+        lst = pickle.load(open('data_1000.dump', 'rb'))
+        # lst = generate_numbers(0, 100, 1000, 3)
+        psi = 50
+        T_i = [5,5]
+        dimension = 2
+        mins, maxs, data = kd.get_leaves(lst, 15) # Should have a total of 32 leaves
+    
+        bounding_rects = []
+        indices = {}
+        cells = []
+    
+        for i in range(len(mins)):
+            rect = (tuple(mins[i]), (tuple(maxs[i])))
+            bounding_rects.append(rect)
+            indices[rect] = i
+    
+        pdb.set_trace()
+    
+        # Sort based off of monotonicity condition.
+        pdb.set_trace()
+        bounding_rects_sorted = bounding_rects.copy()
+        mergeSort(bounding_rects_sorted)
+        k = np.asarray([indices[i] for i in bounding_rects_sorted])
+    
+        mins = mins[k]
+        maxs = maxs[k]
+        data = [data[i] for i in k]
+        
+        # Create the cells
+        for i in range(len(mins)):
+            cell = Cell(i, (mins[i], maxs[i]))
+            for j in data[i]:
+                cell.add_data(j)
+            cells.append(cell)
+            print(f'Cell: {i}, data: {len(cell.data)}')
+    
+        # Check cells:
+        for i in range(len(mins)-1, -1, -1):
+            br1 = cells[i].bounding_rectangle
+            for j in range(i-1,-1, -1):
+                br2 = cells[j].bounding_rectangle
+                if (br1[0] < br2[1]).all():
+                    print(i, j)
+                    # raise Exception(f'cell {i} is greater than cell {j}')
+    
+        partitions, full_lst = mapping_list_partition_cells(cells, 3)
+        print(bounding_rects)
+    
+        # visualize_cells(lst, cells, psi)
+    
+        psi = 50
+        params = train(partitions, 3, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+    
+        shards = create_shards(params, full_lst, psi, cells)
+        for i in cells:
+            print(i.mapping, i.shards)
+    
+        
+        # visualize(Theta, lst, T_i,params, psi, M, cells )
+        # pdb.set_trace()
+        for shard_ind in shards:
+            for shard_id in shard_ind.get_keys():
+                shard = shard_ind.get(shard_id)
+                print(shard.lower_mapping, shard.upper_mapping, len(shard.bounding_rectangles), (shard_ind.get_id(), shard.id), len(shard.get_data()))
+        
+        KNN_random_points = generate_numbers(0, 100, 100, 2)
+        K = 100
+        pages = 0
+        amount = 0
+        for point in KNN_random_points:
+            nearest, p = KNN_updated(K, point, params, shards, psi, cells)
+            nearest = np.asarray(nearest)
+            nearest = nearest[np.argsort(nearest[:, 0])]
+            pages += p
+            actual = np.asarray([np.asarray((distance(point, i), *i)) for i in lst])
+            actual = actual[np.argsort(actual[:,0])][:K]
+            amount += 1
+            
+            if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+                print(actual)
+                print(nearest)
+                raise Exception(amount, K)
+            print(f"Point: {point}")
+            print(f"Neighbours: {np.asarray(nearest)}")
+            print(f"Pages: {p}")
+        
+        print(f"Average pages for {K}: {pages/100}")
 
-    # test_1000()
-    test_synthetics()
+    def test_images():
+        lst = pickle.load(open('6d_cifar_100', 'rb'))
+        # params, shards, psi, cells = pickle.load(open('cifar_100_klisa_10bp.obj', 'rb'))
+        open('klisa_cifar_100.txt','w')
+        dimension = 6
+        mins, maxs, data = kd.get_leaves(lst, 32)
+        
+        pdb.set_trace()
+
+        bounding_rects = []
+        indices = {}
+        cells = []
+    
+        for i in range(len(mins)):
+            rect = (tuple(mins[i]), (tuple(maxs[i])))
+            bounding_rects.append(rect)
+            indices[rect] = i
+    
+        # Sort based off of monotonicity condition.
+        pdb.set_trace()
+        bounding_rects_sorted = bounding_rects.copy()
+        mergeSort(bounding_rects_sorted)
+        k = np.asarray([indices[i] for i in bounding_rects_sorted])
+    
+        mins = mins[k]
+        maxs = maxs[k]
+        data = [data[i] for i in k]
+        
+        # Create the cells
+        for i in range(len(mins)):
+            cell = Cell(i, (mins[i], maxs[i]))
+            for j in data[i]:
+                cell.add_data(j)
+            cells.append(cell)
+            print(f'Cell: {i}, data: {len(cell.data)}')
+    
+        # Check cells:
+        for i in range(len(mins)-1, -1, -1):
+            br1 = cells[i].bounding_rectangle
+            for j in range(i-1,-1, -1):
+                br2 = cells[j].bounding_rectangle
+                if (br1[0] < br2[1]).all():
+                    print(i, j)
+                    # raise Exception(f'cell {i} is greater than cell {j}')
+
+        partitions, full_lst = mapping_list_partition_cells(cells, 10)
+        psi = 50
+        params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+        shards = create_shards(params, full_lst, psi, cells)
+        pickle.dump([params, shards, psi, cells], open("cifar_100_klisa_10bp.obj", 'wb'))
+
+        q_points = pickle.load(open('qpoints_images.dump', 'rb'))
+        for K in [1, 5, 10, 50, 100, 500]:
+            pages = 0
+            for point in KNN_random_points:
+                nearest, p = KNN_updated(K, point, params, shards, psi, cells)
+                pages += p
+                actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+                actual = actual[np.argsort(actual[:,0])][:K]
+                print(f"Point: {point}")
+                print(f"Neighbours: {np.asarray(nearest)}")
+                print(f"Actual: {actual}")
+                print(f"Pages: {p}")
+
+            with open("klisa_cifar_100.txt", "a") as out:
+                out.write(f"Average pages for {K}: {pages/100}.\n")
+                if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+                    print(actual)
+                    print(nearest)
+                    out.write("BIG OOF at {amount} {K}")
+            print(f"Average pages: {pages/100}")
+
+    def test_long_beach():
+        lst = pickle.load(open('LB.dump', 'rb'))
+        params, shards, psi, cells = pickle.load(open("long_beach_klisa_10bp.obj", 'rb'))
+        open("klisa_long_beach_query.txt", 'w')
+
+        dimension = 2
+
+        # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
+        # mins, maxs, data = kd.get_leaves(lst, 16) # Should have a total of 32 leaves
+        # pdb.set_trace()
+    
+        # bounding_rects = []
+        # indices = {}
+        # cells = []
+    
+        # for i in range(len(mins)):
+        #     rect = (tuple(mins[i]), (tuple(maxs[i])))
+        #     bounding_rects.append(rect)
+        #     indices[rect] = i
+    
+        # # Sort based off of monotonicity condition.
+        # pdb.set_trace()
+        # bounding_rects_sorted = bounding_rects.copy()
+        # mergeSort(bounding_rects_sorted)
+        # k = np.asarray([indices[i] for i in bounding_rects_sorted])
+    
+        # mins = mins[k]
+        # maxs = maxs[k]
+        # data = [data[i] for i in k]
+        # 
+        # # Create the cells
+        # for i in range(len(mins)):
+        #     cell = Cell(i, (mins[i], maxs[i]))
+        #     for j in data[i]:
+        #         cell.add_data(j)
+        #     cells.append(cell)
+        #     print(f'Cell: {i}, data: {len(cell.data)}')
+    
+        # # Check cells:
+        # for i in range(len(mins)-1, -1, -1):
+        #     br1 = cells[i].bounding_rectangle
+        #     for j in range(i-1,-1, -1):
+        #         br2 = cells[j].bounding_rectangle
+        #         if (br1[0] < br2[1]).all():
+        #             print(i, j)
+        #             # raise Exception(f'cell {i} is greater than cell {j}')
+    
+        # partitions, full_lst = mapping_list_partition_cells(cells, 3)
+        # psi = 50
+        # params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+        # shards = create_shards(params, full_lst, psi, cells)
+        # pickle.dump([params, shards, psi, cells], open("long_beach_klisa_10bp.obj", 'wb'))
+
+
+        KNN_random_points = pickle.load(open('qpoints_LB.dump', 'rb'))
+        f = open("klisa_long_beach_results.txt", "w")
+        f.close()
+        for K in [1, 5, 10, 50, 100, 500]:
+            pages = 0
+            for point in KNN_random_points:
+                nearest, p = KNN_updated(K, point, params, shards, psi, cells)
+                pages += p
+                actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+                actual = actual[np.argsort(actual[:,0])][:K]
+                print(f"Point: {point}")
+                print(f"Neighbours: {np.asarray(nearest)}")
+                print(f"Actual: {actual}")
+                print(f"Pages: {p}")
+
+            with open("klisa_long_beach_results.txt", "a") as out:
+                out.write(f"Average pages for {K}: {pages/100}.\n")
+                if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+                    print(actual)
+                    print(nearest)
+                    out.write("BIG OOF at {amount} {K}")
+            print(f"Average pages: {pages/100}")
+if __name__ == "__main__":
+    # test_images()
+    # kd_tree_implementation.test_1000()
+    # kd_tree_implementation.test_long_beach()
+    kd_tree_implementation.test_images()
+    # test_synthetics()
     # test_nd()
     # test_3d()
     # test_long_beach()
