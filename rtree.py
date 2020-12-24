@@ -267,15 +267,19 @@ class RTree_node:
                     centroid.append((curr_max + curr_min)/2)
                 centroid = tuple(centroid)
                 lst.append(centroid)
-                mapping[centroid] = i
+                if centroid in mapping:
+                    mapping[centroid].append(i)
+                else:
+                   mapping[centroid] = [i]
 
             arr = np.array(lst)
             lst1, lst2, kmeans = cluster(arr, M)
-            node2 = RTree_node([], [self.children[mapping[tuple(i)]] for i in lst2], self.parent, [])
+
+            node2 = RTree_node([], [self.children[mapping[tuple(i)].pop()] for i in lst2], self.parent, [])
             for child in node2.children:
                 child.parent = node2
 
-            self.children = [self.children[mapping[tuple(i)]] for i in lst1]
+            self.children = [self.children[mapping[tuple(i)].pop()] for i in lst1]
             self.data_points = []
             node1 = self
             return node1, node2
@@ -308,6 +312,19 @@ class RTree_node:
                     ids_found.extend(new_ids)
                     pages += p
         return ans, pages, ids_found
+
+    def find_point(self, point):
+        if self.children == []:
+            for i in self.data_points:
+                if (i == point).all():
+                    return self
+        else:
+            for child in self.children:
+                node = child.find_point(point)
+            if not node:
+                return None
+            return node
+
 
     def parent_chain(self):
         chain = [self.id]
@@ -535,16 +552,33 @@ def traverse(root, fig):
         count += 1
 
 def test_images():
+    pdb.set_trace()
     root = RTree(6)
-    lst = pickle.load(open('6d_cifar_100', 'rb'))
+    lst = pickle.load(open('6d_images.dump', 'rb'))
+    # Change to float type to allow for distance calculations.
+    lst = lst.astype('float64')
+    # root = pickle.load(open('debug', 'rb'))
+    # root = pickle.load(open('rtree_cifar_100', 'rb'))
     # root = pickle.load(open("LB_rtree.obj", 'rb'))
+    count = 0
+    # pdb.set_trace()
+    # root.insert(lst[98538])
     for i in lst:
         root.insert(i)
-    total = 0
+        count += 1
+        try:
+            assert data_len(root.root) == len(root.data)
+        except:
+            print(count)
+            pdb.set_trace()
+            root.insert(i)
+
+    pdb.set_trace()
+    pickle.dump(root, open('rtree_images', 'wb'))
     q_points = pickle.load(open('qpoints_images.dump', 'rb'))
 
     print("KNN Testing!")
-    f = open("rtree_images_cifar_100_results.txt", 'w')
+    f = open("rtree_images_results.txt", 'w')
     f.close()
    
     for k in [1,5,10, 50,100, 500]:
@@ -552,27 +586,35 @@ def test_images():
         for i in q_points:
             neighbours, pages = root.root.KNN(i, [], k)
             neighbours = np.asarray(neighbours)
-            actual = np.asarray([np.asarray((distance(point, i, 2), point[0], point[1])) for point in lst])
-            actual = actual[np.argsort(actual[:,0])]
-            print(actual[:k])
+            actual = np.asarray([np.asarray((distance(point, i, 6), *point)) for point in lst])
+            actual = actual[np.argsort(actual[:,0])][:k]
+
+            if not (actual[:, 1:] == np.asarray(neighbours[:, 1:])).all():
+                pdb.set_trace()
+                neighbours, pages = root.root.KNN(i, [], k)
+                raise Exception('Big oof')
 
             total += pages
             print(f'Point {i}')
             print(f'Neighbours {neighbours}')
             print(f'Pages {pages}')
-        with open("rtree_images_cifar_100_results.txt", 'a') as out:
+        with open("rtree_images_results.txt", 'a') as out:
             out.write(f'Average pages for {k}: {total/100}\n')
         print(f'Average pages is {total/100}')
 
 def test_long_beach():
     root = RTree(2)
     lst = pickle.load(open('LB.dump', 'rb'))
+
+    # Change to float type to allow for distance calculations
+    lst = lst.astype('float64')
     # root = pickle.load(open("LB_rtree.obj", 'rb'))
     fig = plt.figure()
 
     ax = fig.add_subplot(111)
     for i in lst:
         root.insert(i)
+        assert data_len(root.root) == len(root.data)
     pickle.dump(root, open("LB_rtree.obj", 'wb'))
     x = np.take(lst,0, 1)
     y = np.take(lst, 1, 1)
@@ -607,13 +649,15 @@ def test_long_beach():
             neighbours, pages = root.root.KNN(i, [], k)
             neighbours = np.asarray(neighbours)
             actual = np.asarray([np.asarray((distance(point, i, 2), point[0], point[1])) for point in lst])
-            actual = actual[np.argsort(actual[:,0])]
-            print(actual[:k])
+            actual = actual[np.argsort(actual[:,0])][:k]
 
             total += pages
             print(f'Point {i}')
             print(f'Neighbours {neighbours}')
             print(f'Pages {pages}')
+            if not (actual[:, 1:] == np.asarray(neighbours[:, 1:])).all():
+                pdb.set_trace()
+                raise Exception('Big oof')
         with open("rtree_long_beach_results.txt", 'a') as out:
             out.write(f'Average pages for {k}: {total/100}\n')
         print(f'Average pages is {total/100}')

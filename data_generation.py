@@ -69,6 +69,7 @@ def cluster(lst, M):
         lst1, lst2 = rebalance(lst1, lst2, centers[0], centers[1], M//2, dimension)
     elif lst2.shape[0] < M//2:
         lst2, lst1 = rebalance(lst2, lst1, centers[1], centers[0], M//2, dimension)
+
     return (lst1, lst2, kmeans)
 
 def run_k_means(lst, K):
