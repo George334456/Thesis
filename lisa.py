@@ -66,6 +66,77 @@ def dfs(list_of_list, max_depth, depth):
             full_tuples.append(j)
     return full_tuples
 
+def old_train(partitions, sigma, psi):
+    # Change psi as we increase the number of points it can take.
+    settings = []
+
+    # TODO: Make it so that we have more than 5 points in a partition. See if beta can descend when we have more to work with.
+
+    for partition in partitions:
+        V = len(partition)
+        y = cp.arange(V).reshape([V, 1])
+        beta = cp.zeros([1,sigma])
+        for i in range(sigma):
+            ind = cp.floor(i * V/sigma)
+            # ind = np.floor(i * V/psi)
+            beta[0][i] = partition[int(ind)] # Initialize with an integer
+
+        try:
+            alpha, A = calculate_alpha(partition, beta, y)
+        except:
+            pdb.set_trace()
+            alpha, A = calculate_alpha(partition, beta,y )
+            pass
+        curr_loss = calculate_loss(A, alpha, y)
+        orig_loss = curr_loss
+        # print("loss")
+        # print(loss)
+
+        num_iterations = 0
+        curr_beta_lr = None
+        converge = False
+        lr_lst = [0.1, 0.05, 0.01, 0.001]
+        while(num_iterations < 1000):
+            print(curr_loss)
+            print(beta)
+            meme = time.time()
+            grad = calculate_gradient(alpha, beta, partition, A, y)
+            print(f'{time.time() - meme} s for calculate gradient')
+            print(num_iterations)
+            print(grad)
+            grad = grad.flatten()[1:] # Grab everything except the first element.
+            meme = time.time()
+            for i in lr_lst:
+                print(f'Learning rate is {i}')
+                beta_lr = (grad * i) + beta # Descend in the gradient. TODO: MAKE SURE THIS IS DOING ELEMENT WISE ADDITION
+                beta_lr = cp.sort(beta_lr)
+                try:
+                    alpha, A = calculate_alpha(partition, beta_lr, y)
+                except:
+                    # If we fail to calculate_alpha properly, then we just say, okay, look at the next one.
+                    continue
+                if check_alpha(alpha):
+                    loss = calculate_loss(A, alpha, y)
+                    if loss < curr_loss:
+                        curr_loss = loss
+                        curr_beta_lr = beta_lr
+                        # Since we're counting from max to low, we want to be greedy and break out immediately
+                        break
+            print(f'{time.time() - meme} for descent')
+            if curr_beta_lr is not None:
+                # We found something that had loss minimizing.
+                beta = curr_beta_lr
+                num_iterations += 1 
+                if orig_loss - curr_loss < 0.001:
+                    break
+                orig_loss = curr_loss
+            else:
+                # Loss didn't change, so break?
+                break
+        alpha, A = calculate_alpha(partition, beta, y)
+        settings.append((alpha.flatten(), beta.flatten(), (A @ alpha).flatten()))
+    return settings
+
 def train(partitions, sigma, psi):
     """
     Return the parameters for the piecewise monotone linear regression model.
@@ -113,8 +184,9 @@ def train(partitions, sigma, psi):
             print(grad)
             grad = grad.flatten()[1:] # Grab everything except the first element.
             meme = time.time()
-
-            for i in [0.1, 0.05, 0.01, 0.001]: # Possible learning rates
+            while lr_lst:
+                i = lr_lst[0]
+                print(f'Learning rate is {i}')
                 beta_lr = (grad * i) + beta # Descend in the gradient. TODO: MAKE SURE THIS IS DOING ELEMENT WISE ADDITION
                 beta_lr = cp.sort(beta_lr)
                 try:
@@ -129,6 +201,7 @@ def train(partitions, sigma, psi):
                         curr_beta_lr = beta_lr
                         # Since we're counting from max to low, we want to be greedy and break out immediately
                         break
+                lr_lst.pop(0)
             print(f'{time.time() - meme} for descent')
             if curr_beta_lr is not None:
                 # We found something that had loss minimizing.
@@ -1478,7 +1551,7 @@ def test_1000():
     # print(f"Average pages: {pages/100}")
 
 def test_images():
-    lst = pickle.load(open('6d_cifar_10', 'rb'))
+    lst = pickle.load(open('6d_cifar_100', 'rb'))
     T_i = [6, 6, 6, 6, 6, 6]
     # params, shards, M, T_i, psi, Theta, cells = pickle.load(open('lisa_images_10bp_Ti4.obj', 'rb'))
     # params, shards, M, T_i, psi, Theta, cells = pickle.load(open('lisa_images_cifar_100.obj', 'rb'))
@@ -1507,7 +1580,7 @@ def test_images():
     pickle.dump([params, shards, M, T_i, psi, Theta, cells], open('lisa_images_cifar_100.obj', 'wb'))
     pdb.set_trace()
     q_points = pickle.load(open('qpoints_images.dump', 'rb'))
-    open("lisa_images_cifar_10_results.txt", 'wb')
+    open("lisa_images_cifar_100_results.txt", 'wb')
     for K in [1, 5, 10, 50, 100, 500]:
         pages = 0
         timer = 0
@@ -1534,11 +1607,50 @@ def test_images():
             print(f"Point: {point}")
             print(f"Neighbours: {np.asarray(nearest)}")
             print(f"Pages: {p}")
-        with open("lisa_images_cifar_10_results.txt", 'a') as output:
+        with open("lisa_images_cifar_100_results.txt", 'a') as output:
             output.write(f"Average pages for {K} on synthetic points {amount} for dimension {dimension}D: {pages/100}.\nTook {timer/100} seconds.\n")
         
         print(f"Average pages for {K}: {pages/100}")
 
+def test(in_file, point_file, out_file, dump_file):
+    lst = pickle.load(open(in_file, 'rb'))
+    T_i = [6, 6, 6, 6, 6, 6]
+    open(out_file,'w')
+    Theta = create_cells(lst, T_i)
+
+    partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 10)
+    M = [partitions[0][0]]
+    for i in partitions:
+       M.append(i.max())
+    psi = 50
+    bounding_rectangles = decompose_query(Theta, Theta[:, 0], Theta[:, -1])
+    cells = []
+    for i in range(len(bounding_rectangles)):
+        cells.append(Cell(i, bounding_rectangles[i]))
+    params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+    shards = create_shards(params, full_lst, psi, cells)
+    pickle.dump([params, shards, M, T_i, psi, cells], open(dump_file, 'wb'))
+
+    q_points = pickle.load(open(point_file, 'rb'))
+    for K in [1, 5, 10, 50, 100, 500]:
+        pages = 0
+        for point in q_points:
+            nearest, p = KNN_updated(K, point, params, shards, psi, cells)
+            pages += p
+            actual = np.asarray([np.asarray((distance(point, i), *i)) for i in lst])
+            actual = actual[np.argsort(actual[:,0])][:K]
+            print(f"Point: {point}")
+            print(f"Neighbours: {np.asarray(nearest)}")
+            print(f"Actual: {actual}")
+            print(f"Pages: {p}")
+            if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+                print(actual)
+                print(nearest)
+                out.write("BIG OOF at {amount} {K}")
+
+        with open(out_file, "a") as out:
+            out.write(f"Average pages for {K}: {pages/100}.\n")
+        print(f"Average pages: {pages/100}")
 
 def test_long_beach():
     lst = pickle.load(open('LB.dump', 'rb'))
@@ -1775,9 +1887,9 @@ class kd_tree_implementation:
         print(f"Average pages for {K}: {pages/100}")
 
     def test_images():
-        lst = pickle.load(open('6d_images.dump', 'rb'))
+        lst = pickle.load(open('6d_cifar_100', 'rb'))
         # params, shards, psi, cells = pickle.load(open('cifar_100_klisa_10bp.obj', 'rb'))
-        open('klisa_cifar_10.txt','w')
+        open('klisa_cifar_100.txt','w')
         dimension = 6
         length = int(lst.shape[0]/(2**12))
         pdb.set_trace()
@@ -1931,11 +2043,92 @@ class kd_tree_implementation:
                     print(nearest)
                     out.write("BIG OOF at {amount} {K}")
             print(f"Average pages: {pages/100}")
+
+    def test(in_file, point_file, out_file, dump_file):
+        lst = pickle.load(open(in_file, 'rb'))
+        # params, shards, psi, cells = pickle.load(open('cifar_100_klisa_10bp.obj', 'rb'))
+        open(out_file,'w')
+        dimension = 6
+        length = int(lst.shape[0]/(2**12))
+        pdb.set_trace()
+        mins, maxs, data = kd.get_leaves(lst, length)
+        
+        pdb.set_trace()
+
+        bounding_rects = []
+        indices = {}
+        cells = []
+    
+        for i in range(len(mins)):
+            rect = (tuple(mins[i]), (tuple(maxs[i])))
+            bounding_rects.append(rect)
+            indices[rect] = i
+    
+        # Sort based off of monotonicity condition.
+        pdb.set_trace()
+        bounding_rects_sorted = bounding_rects.copy()
+        mergeSort(bounding_rects_sorted)
+        k = np.asarray([indices[i] for i in bounding_rects_sorted])
+    
+        mins = mins[k]
+        maxs = maxs[k]
+        data = [data[i] for i in k]
+        
+        # Create the cells
+        # TODO: bounding rectangles for the top most cells must be changed by about .1.
+        for i in range(len(mins)):
+            cell = Cell(i, (mins[i], maxs[i]))
+            for j in data[i]:
+                cell.add_data(j)
+            cells.append(cell)
+            print(f'Cell: {i}, data: {len(cell.data)}')
+
+        pdb.set_trace()
+    
+        # Check cells:
+        for i in range(len(mins)-1, -1, -1):
+            br1 = cells[i].bounding_rectangle
+            for j in range(i-1,-1, -1):
+                br2 = cells[j].bounding_rectangle
+                if (br1[0] < br2[1]).all():
+                    print(i, j)
+                    # raise Exception(f'cell {i} is greater than cell {j}')
+
+        partitions, full_lst = mapping_list_partition_cells(cells, 10)
+        pdb.set_trace()
+        psi = 50
+        params = old_train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+        shards = create_shards(params, full_lst, psi, cells)
+        pickle.dump([params, shards, psi, cells], open(dump_file, 'wb'))
+
+        q_points = pickle.load(open(point_file, 'rb'))
+        for K in [1, 5, 10, 50, 100, 500]:
+            pages = 0
+            for point in q_points:
+                nearest, p = KNN_updated(K, point, params, shards, psi, cells)
+                pages += p
+                actual = np.asarray([np.asarray((distance(point, i), *i)) for i in lst])
+                actual = actual[np.argsort(actual[:,0])][:K]
+                print(f"Point: {point}")
+                print(f"Neighbours: {np.asarray(nearest)}")
+                print(f"Actual: {actual}")
+                print(f"Pages: {p}")
+                if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+                    print(actual)
+                    print(nearest)
+                    out.write("BIG OOF at {amount} {K}")
+
+            with open(out_file, "a") as out:
+                out.write(f"Average pages for {K}: {pages/100}.\n")
+            print(f"Average pages: {pages/100}")
 if __name__ == "__main__":
     # test_images()
+    test('6d_cifar_10', 'qpoints_images.dump', 'lisa_images_cifar_10_results.txt', 'lisa_cifar_10_dump')
     # kd_tree_implementation.test_1000()
     # kd_tree_implementation.test_long_beach()
-    kd_tree_implementation.test_images()
+    # kd_tree_implementation.test_images()
+    # kd_tree_implementation.test('6d_cifar_10', 'qpoints_images.dump', 'klisa_images_cifar_10_results.txt', 'klisa_cifar_10_dump')
+    # kd_tree_implementation.test('6d_cifar_100', 'qpoints_images.dump', 'klisa_images_cifar_100_results.txt', 'klisa_cifar_100_dump')
     # test_synthetics()
     # test_nd()
     # test_3d()
