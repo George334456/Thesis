@@ -1627,7 +1627,10 @@ def test(in_file, point_file, out_file, dump_file):
     cells = []
     for i in range(len(bounding_rectangles)):
         cells.append(Cell(i, bounding_rectangles[i]))
+    a = time.time()
     params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+    with open(out_file, 'a') as out:
+        out.write(f"Took {time.time() - a} to train.\n")
     shards = create_shards(params, full_lst, psi, cells)
     pickle.dump([params, shards, M, T_i, psi, cells], open(dump_file, 'wb'))
 
@@ -2097,7 +2100,10 @@ class kd_tree_implementation:
         partitions, full_lst = mapping_list_partition_cells(cells, 10)
         pdb.set_trace()
         psi = 50
-        params = old_train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+        a = time.time()
+        params = train(partitions, 10, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+        with open(out_file, 'a') as out:
+            out.write(f'Took {time.time() - a} to train.\n')
         shards = create_shards(params, full_lst, psi, cells)
         pickle.dump([params, shards, psi, cells], open(dump_file, 'wb'))
 
@@ -2123,7 +2129,9 @@ class kd_tree_implementation:
             print(f"Average pages: {pages/100}")
 if __name__ == "__main__":
     # test_images()
-    test('6d_cifar_10', 'qpoints_images.dump', 'lisa_images_cifar_10_results.txt', 'lisa_cifar_10_dump')
+    pdb.set_trace()
+    test('6d_LEGO', 'qpoints_images.dump', 'lisa_images_LEGO_results.txt', 'lisa_LEGO_dump')
+    # kd_tree_implementation.test('6d_COIL_100', 'qpoints_images.dump', 'klisa_images_COIL100_results.txt', 'klisa_COIL100_dump')
     # kd_tree_implementation.test_1000()
     # kd_tree_implementation.test_long_beach()
     # kd_tree_implementation.test_images()

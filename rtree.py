@@ -551,10 +551,51 @@ def traverse(root, fig):
         # traverse(i, ax)
         count += 1
 
+def test(in_file, point_file, out_file, dump_file, dimension):
+    root = RTree(dimension)
+    lst = pickle.load(open(in_file, 'rb'))
+    lst = lst.astype('float64')
+    count = 0
+    for i in lst:
+        root.insert(i)
+        count += 1
+        try:
+            assert data_len(root.root) == len(root.data)
+        except:
+            pdb.set_trace()
+            raise Exception("data_len not correct")
+    pdb.set_trace()
+    pickle.dump(root, open(dump_file, 'wb'))
+    q_points = pickle.load(open(point_file, 'rb'))
+
+    f = open(out_file, 'w')
+    f.close()
+    for k in [1, 5, 10, 50, 100, 500]:
+        total = 0
+        for i in q_points:
+            neighbours, pages = root.root.KNN(i, [], k)
+            neighbours = np.asarray(neighbours)
+
+            actual = np.asarray([np.asarray((distance(point, i, 6), *point)) for point in lst])
+            actual = actual[np.argsort(actual[:,0])][:k]
+
+            if not (actual[:, 1:] == np.asarray(neighbours[:, 1:])).all():
+                pdb.set_trace()
+                neighbours, pages = root.root.KNN(i, [], k)
+                raise Exception('Big oof')
+
+            total += pages
+            print(f'Point {i}')
+            print(f'Neighbours {neighbours}')
+            print(f'Pages {pages}')
+        with open(out_file, 'a') as out:
+            out.write(f'Average pages for {k}: {total/100}\n')
+        print(f'Average pages is {total/100}')
+
 def test_images():
     pdb.set_trace()
     root = RTree(6)
-    lst = pickle.load(open('6d_images.dump', 'rb'))
+    lst = pickle.load(open('6d_images_duplicates.dump', 'rb'))
     # Change to float type to allow for distance calculations.
     lst = lst.astype('float64')
     # root = pickle.load(open('debug', 'rb'))
@@ -574,11 +615,11 @@ def test_images():
             root.insert(i)
 
     pdb.set_trace()
-    pickle.dump(root, open('rtree_images', 'wb'))
+    pickle.dump(root, open('rtree_images_imagenet', 'wb'))
     q_points = pickle.load(open('qpoints_images.dump', 'rb'))
 
     print("KNN Testing!")
-    f = open("rtree_images_results.txt", 'w')
+    f = open("rtree_images_imagenet_results.txt", 'w')
     f.close()
    
     for k in [1,5,10, 50,100, 500]:
@@ -598,7 +639,7 @@ def test_images():
             print(f'Point {i}')
             print(f'Neighbours {neighbours}')
             print(f'Pages {pages}')
-        with open("rtree_images_results.txt", 'a') as out:
+        with open("rtree_images_imagenet_results.txt", 'a') as out:
             out.write(f'Average pages for {k}: {total/100}\n')
         print(f'Average pages is {total/100}')
 
@@ -933,7 +974,8 @@ if __name__ == '__main__':
     #     pdb.set_trace()
     #     root.insert(lst[i])
     # test_synthetics()
-    test_images()
+    # test_images()
+    test('6d_COIL_100', 'qpoints_images.dump', 'rtree_images_COIL100_results', 'rtree_COIL100', 6)
     # test_1000()
     # test_3d()
     # test_nd()
