@@ -12,6 +12,7 @@ import pickle
 import time
 import operator
 import cupy as cp
+import sys, getopt
 """
 Quick Reminders:
 Theta = Border points generated along every axis
@@ -1161,7 +1162,9 @@ def test_synthetics():
         for i in partitions:
             M.append(i.max())
         psi = 50
+        a = time.time()
         params = train(partitions, 3, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+        a = time.time() - a
         bounding_rectangles = decompose_query(Theta, np.asarray((Theta[0][0], Theta[1][0])), np.asarray((Theta[0][-1], Theta[1][-1])))
         cells = []
         for i in range(len(bounding_rectangles)):
@@ -1185,7 +1188,9 @@ def test_synthetics():
 
         total_p = 0
         count = 0
-        open("lisa_synthetic_query.txt", "w")
+        f = open("lisa_synthetic_query.txt", "w")
+        f.write("Took {a} time training.\n")
+        f.close()
         for i in q_rects:
             points = decompose_query(Theta, i[0], i[1])
             return_results, pages, page_set = find_points(points, params, shards, M, T_i, psi, Theta)
@@ -1283,7 +1288,9 @@ def test_nd():
             for i in partitions:
                 M.append(i.max())
             psi = 50
+            a = time.time()
             params = train(partitions, 3, psi)
+            a = time.time() - a
 
             bounding_rectangles = decompose_query(Theta, Theta[:, 0], Theta[:, -1])
             cells = []
@@ -1297,7 +1304,7 @@ def test_nd():
                 mins.append(np.min(lst[:,i]))
                 maxs.append(np.max(lst[:,i]))
             with open("lisa_synthetic_nd.txt", 'a') as output:
-                output.write(f"Dimension {dimension}\n")
+                output.write(f"Dimension {dimension}\nTook {a} time to train.\n")
 
             q_points = pickle.load(open(f'synthetic_qpoints_{dimension}d.dump', 'rb'))
             for K in [500]:
@@ -1967,6 +1974,99 @@ class kd_tree_implementation:
                 out.write(f"Average pages for {K}: {pages/100}.\n")
             print(f"Average pages: {pages/100}")
 
+    def test_synthetics():
+        open("klisa_synthetic_time.txt", 'w')
+        for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
+            lst = pickle.load(open(f'synthetic_{amount}.dump', 'rb'))
+
+            dimension = 2
+
+            # TODO: http://sid.cps.unizar.es/projects/ProbabilisticQueries/datasets/ Long beach dataset.
+            mins, maxs, data = kd.get_leaves(lst, 16) # Should have a total of 32 leaves
+            pdb.set_trace()
+    
+            bounding_rects = []
+            indices = {}
+            cells = []
+    
+            for i in range(len(mins)):
+                rect = (tuple(mins[i]), (tuple(maxs[i])))
+                bounding_rects.append(rect)
+                indices[rect] = i
+    
+            # Sort based off of monotonicity condition.
+            pdb.set_trace()
+            bounding_rects_sorted = bounding_rects.copy()
+            mergeSort(bounding_rects_sorted)
+            k = np.asarray([indices[i] for i in bounding_rects_sorted])
+    
+            mins = mins[k]
+            maxs = maxs[k]
+            data = [data[i] for i in k]
+            
+            # Create the cells
+            for i in range(len(mins)):
+                maxs[i] = maxs[i] + 0.01
+                cell = Cell(i, (mins[i], maxs[i]))
+                for j in data[i]:
+                    cell.add_data(j)
+                cells.append(cell)
+                print(f'Cell: {i}, data: {len(cell.data)}')
+    
+            # Check cells:
+            for i in range(len(mins)-1, -1, -1):
+                br1 = cells[i].bounding_rectangle
+                for j in range(i-1,-1, -1):
+                    br2 = cells[j].bounding_rectangle
+                    if (br1[0] < br2[1]).all():
+                        print(i, j)
+                        # raise Exception(f'cell {i} is greater than cell {j}')
+    
+            partitions, full_lst = mapping_list_partition_cells(cells, 10)
+            psi = 50
+            pdb.set_trace()
+            a = time.time()
+            params = train(partitions, 3, psi) # Train the partitions with 2 breakpoints. Tunable hyperparameter. IE sigma + 1 == second parameter.
+            a = time.time() - a
+    
+            shards = create_shards(params, full_lst, psi, cells)
+        
+            q_rects = pickle.load(open(f"synthetic_qrects_{amount}.dump", "rb"))
+    
+            total_p = 0
+            count = 0
+            f = open("klisa_synthetic_time.txt", "a")
+            f.write(f"Took {a} time training.\n")
+            f.close()
+    
+            KNN_random_points = pickle.load(open(f"synthetic_qpoints_{amount}.dump", "rb"))
+            timer = []
+            
+            for K in [50]:
+            # for K in [1, 5, 10, 50, 100, 500]:
+                pages = 0
+                print(f'K: {pages}')
+                for point in KNN_random_points:
+                    a = time.time()
+                    nearest, p = KNN_updated(K, point, params, shards, psi, cells)
+                    timer.append(time.time() - a)
+                    nearest = np.asarray(nearest)
+                    nearest = nearest[np.argsort(nearest[:, 0])]
+                    pages += p
+                    actual = np.asarray([np.asarray((distance(point, i), i[0], i[1])) for i in lst])
+                    actual = actual[np.argsort(actual[:,0])][:K]
+                    if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+                        print(actual)
+                        print(nearest)
+                        raise Exception(amount, K)
+                    # print(actual[:,1:] == np.asarray(nearest)[:,1:])
+                    print(f"Point: {point}")
+                    print(f"Neighbours: {np.asarray(nearest)}")
+                    print(f"Pages: {p}")
+                with open("klisa_synthetic_time.txt", 'a') as output:
+                    output.write(f"Average pages for {K} on synthetic points {amount}: {pages/100}.\nAverage time: {sum(timer)/100}\n")
+                print(f"Average pages for {K}: {pages/100}")
+
     def test_long_beach():
         lst = pickle.load(open('LB.dump', 'rb'))
         # params, shards, psi, cells = pickle.load(open("long_beach_klisa_10bp.obj", 'rb'))
@@ -2047,6 +2147,66 @@ class kd_tree_implementation:
                     out.write("BIG OOF at {amount} {K}")
             print(f"Average pages: {pages/100}")
 
+    def test_nd():
+        open('klisa_synthetic_nd.txt', 'w')
+        values = {3: [10, 10, 10], 4:[ 8, 8, 8, 8], 5: [7, 7, 7, 7, 7], 6: [6, 6, 6, 6, 6, 6]}
+        # for dimension in [6]:
+        for dimension in [3, 4, 5, 6]:
+            # for amount in [32000]:
+            for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
+                lst = pickle.load(open(f'synthetic_{amount}_{dimension}d.dump', 'rb'))
+                T_i = values[dimension]
+                Theta = create_cells(lst, T_i)
+                partitions, full_lst = mapping_list_partition(lst, Theta, T_i, 10)
+    
+                M = [partitions[0][0]]
+                for i in partitions:
+                    M.append(i.max())
+                psi = 50
+                a = time.time()
+                params = train(partitions, 3, psi)
+                a = time.time() - a
+    
+                bounding_rectangles = decompose_query(Theta, Theta[:, 0], Theta[:, -1])
+                cells = []
+                for i in range(len(bounding_rectangles)):
+                    cells.append(Cell(i, bounding_rectangles[i]))
+    
+                shards = create_shards(params, full_lst, psi, cells)
+                mins = []
+                maxs = []
+                for i in range(dimension):
+                    mins.append(np.min(lst[:,i]))
+                    maxs.append(np.max(lst[:,i]))
+                with open("lisa_synthetic_nd.txt", 'a') as output:
+                    output.write(f"Dimension {dimension}\nTook {a} time to train.\n")
+    
+                q_points = pickle.load(open(f'synthetic_qpoints_{dimension}d.dump', 'rb'))
+                for K in [500]:
+                # for K in [1, 5, 10, 50, 100, 500]:
+                    pages = 0
+                    # for point in [q_points[0]]:
+                    for point in q_points:
+                        a = time.time()
+                        nearest, p = KNN_updated(K, point, params, shards, psi, cells)
+                        print(f'Took {time.time() - a} seconds to KNN')
+                        nearest = np.asarray(nearest)
+                        nearest = nearest[np.argsort(nearest[:, 0])]
+                        pages += p
+                        actual = np.asarray([np.asarray((distance(point, i), *i)) for i in lst])
+                        actual = actual[np.argsort(actual[:,0])][:K]
+                        
+                        if not (actual[:, 1:] == np.asarray(nearest)[:, 1:]).all():
+                            print(actual)
+                            print(nearest)
+                            raise Exception(amount, K)
+                        print(f"Point: {point}")
+                        print(f"Neighbours: {np.asarray(nearest)}")
+                        print(f"Pages: {p}")
+                    with open("lisa_synthetic_nd.txt", 'a') as output:
+                        output.write(f"Average pages for {K} on synthetic points {amount} for dimension {dimension}D: {pages/100}.\n")
+                    
+                    print(f"Average pages for {K}: {pages/100}")
     def test(in_file, point_file, out_file, dump_file):
         lst = pickle.load(open(in_file, 'rb'))
         # params, shards, psi, cells = pickle.load(open('cifar_100_klisa_10bp.obj', 'rb'))
@@ -2128,13 +2288,40 @@ class kd_tree_implementation:
                 out.write(f"Average pages for {K}: {pages/100}.\n")
             print(f"Average pages: {pages/100}")
 if __name__ == "__main__":
-    # test_images()
+    # kd_tree_implementation.test_synthetics()
+    
+    opts, args = getopt.getopt(sys.argv[1:], 'ki:q:o:d:')
+    kd_use = False
+    input_file = None
+    query_file = None
+    output_file = None
+    dump_file = None
     pdb.set_trace()
-    test('6d_LEGO', 'qpoints_images.dump', 'lisa_images_LEGO_results.txt', 'lisa_LEGO_dump')
-    # kd_tree_implementation.test('6d_COIL_100', 'qpoints_images.dump', 'klisa_images_COIL100_results.txt', 'klisa_COIL100_dump')
-    # kd_tree_implementation.test_1000()
-    # kd_tree_implementation.test_long_beach()
-    # kd_tree_implementation.test_images()
+    for opt, arg in opts:
+        if opt == '-k':
+            kd_use = True
+        elif opt == '-i':
+            input_file = arg
+        elif opt == '-q':
+            query_file = arg
+        elif opt == '-o':
+            output_file = arg
+        elif opt == '-d':
+            dump_file = arg
+    
+    pdb.set_trace()
+    if kd_use:
+        kd_tree_implementation.test(input_file, query_file, output_file, dump_file)
+    else:
+        test(input_file, query_file, output_file, dump_file)
+
+
+
+
+    # test_images()
+    # pdb.set_trace()
+    # test('6d_VISUAL', 'qpoints_images.dump', 'lisa_images_VISUAL_results.txt', 'lisa_VISUAL_dump')
+    # kd_tree_implementation.test('6d_VISUAL', 'qpoints_images.dump', 'klisa_images_VISUAL_results.txt', 'klisa_VISUAL_dump')
     # kd_tree_implementation.test('6d_cifar_10', 'qpoints_images.dump', 'klisa_images_cifar_10_results.txt', 'klisa_cifar_10_dump')
     # kd_tree_implementation.test('6d_cifar_100', 'qpoints_images.dump', 'klisa_images_cifar_100_results.txt', 'klisa_cifar_100_dump')
     # test_synthetics()

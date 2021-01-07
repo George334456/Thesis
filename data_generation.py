@@ -119,13 +119,17 @@ def unpickle(file):
 
 def create_image_6d(file_name, output, need_pickle=False):
     pdb.set_trace()
-    full_data = []
+    full_data = set()
 
+    # Specifically for lego?
+    # first = [(x,y) for x in (14, 16) for y in (14,16)]
+    # second = [(x,y) for x in (18, 20) for y in (18, 20)]
+    
     first = [(x,y) for x in (4, 12) for y in (4,12)]
     second = [(x,y) for x in (20, 28) for y in (20, 28)]
-    for i in range(1):
+    for i in range(1,6):
         if need_pickle:
-            data = unpickle(f'cifar-100-python/train')[b'data']
+            data = unpickle(f'cifar-10-batches/data_batch_{i}')[b'data']
         else:
             data = pickle.load(open(file_name, 'rb'), encoding='latin1')
 
@@ -140,17 +144,17 @@ def create_image_6d(file_name, output, need_pickle=False):
             blue = i[2048:].reshape(32, 32)
 
             a,b,c,d = first
-            full_data.append(tuple([i[a] for i in [red, green, blue]] + [i[b] for i in [red, green, blue]]))
-            full_data.append(tuple([i[c] for i in [red, green, blue]] + [i[d] for i in [red, green, blue]]))
+            full_data.add(tuple([i[a] for i in [red, green, blue]] + [i[b] for i in [red, green, blue]]))
+            full_data.add(tuple([i[c] for i in [red, green, blue]] + [i[d] for i in [red, green, blue]]))
             print([i[a] for i in [red, green, blue]] + [i[b] for i in [red, green, blue]])
 
             
             a,b,c,d = second
-            full_data.append(tuple([i[a] for i in [red, green, blue]] + [i[b] for i in [red, green, blue]]))
-            full_data.append(tuple([i[c] for i in [red, green, blue]] + [i[d] for i in [red, green, blue]]))
+            full_data.add(tuple([i[a] for i in [red, green, blue]] + [i[b] for i in [red, green, blue]]))
+            full_data.add(tuple([i[c] for i in [red, green, blue]] + [i[d] for i in [red, green, blue]]))
             print([i[a] for i in [red, green, blue]] + [i[b] for i in [red, green, blue]])
 
-        pdb.set_trace()
+    pdb.set_trace()
     full_data = list(full_data)
 
     full_data = np.asarray(full_data)
@@ -162,7 +166,8 @@ def create_image_6d(file_name, output, need_pickle=False):
 
 
 if __name__ == '__main__':
-    create_image_6d('cifar10-ready.bin', '6d_LEGO')
+    create_image_6d('xd', '6d_cifar_10', True)
+    # create_image_6d('cifar10-ready.bin', '6d_VISUAL')
     # a = generate_numbers(0, 255, 100, 6)
     # pickle.dump(a, open('qpoints_images.dump', 'wb'))
 

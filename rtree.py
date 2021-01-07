@@ -556,6 +556,7 @@ def test(in_file, point_file, out_file, dump_file, dimension):
     lst = pickle.load(open(in_file, 'rb'))
     lst = lst.astype('float64')
     count = 0
+    a = time.time()
     for i in lst:
         root.insert(i)
         count += 1
@@ -564,11 +565,13 @@ def test(in_file, point_file, out_file, dump_file, dimension):
         except:
             pdb.set_trace()
             raise Exception("data_len not correct")
+    
+    f = open(out_file, 'w')
+    f.write(f'Insertion time is {time.time() - a}\n')
     pdb.set_trace()
     pickle.dump(root, open(dump_file, 'wb'))
     q_points = pickle.load(open(point_file, 'rb'))
 
-    f = open(out_file, 'w')
     f.close()
     for k in [1, 5, 10, 50, 100, 500]:
         total = 0
@@ -827,15 +830,17 @@ def test_nd():
         for amount in [1000, 4000, 8000, 16000, 32000, 64000]:
             root = RTree(dimension)
             lst = pickle.load(open(f'synthetic_{amount}_{dimension}d.dump', 'rb'))
+            a = time.time()
             for i in lst:
                 root.insert(i)
+            a=  time.time() - a
 
             # Create qpoints for dimension, between [0, 8000] for all dimensions, and 100 of these points.
             q_points = generate_numbers(0, 8000, 100, dimension)
             # pickle.dump(q_points, open(f'synthetic_qpoints_{dimension}d.dump', 'wb'))
             q_points = pickle.load(open(f'synthetic_qpoints_{dimension}d.dump', 'rb'))
             with open('rtree_synthetic_nd.txt','a') as output:
-                output.write(f"{dimension}D:\n")
+                output.write(f"{dimension}D:\nTook {a} time to train\n")
             
             for K in [1, 5, 10, 50, 100, 500]: 
                 count = 0
@@ -975,7 +980,7 @@ if __name__ == '__main__':
     #     root.insert(lst[i])
     # test_synthetics()
     # test_images()
-    test('6d_COIL_100', 'qpoints_images.dump', 'rtree_images_COIL100_results', 'rtree_COIL100', 6)
+    test('6d_VISUAL', 'qpoints_images.dump', 'rtree_images_VISUAL_results', 'rtree_VISUAL', 6)
     # test_1000()
     # test_3d()
     # test_nd()
